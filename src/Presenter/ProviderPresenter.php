@@ -15,7 +15,7 @@ class ProviderPresenter extends RequirementsPresenter
     /**
      * @throws Exception|\Smarty\Exception
      */
-    public function createList(): void
+    public function createList(string $query = ''): void
     {
         global $gDb, $gL10n, $gCurrentUserId;
 
@@ -29,6 +29,10 @@ class ProviderPresenter extends RequirementsPresenter
             'bi-plus-circle-fill'
         );
 
+        $this->assignSmartyVariable('searchUrl', $this->plugin->getUrl('providers.php'));
+        $this->assignSmartyVariable('query', $query);
+        $this->assignSmartyVariable('searchPlaceholder', $gL10n->get('PLG_REQUIREMENTS_SEARCH_PROVIDERS'));
+
         $headers = array(
             $gL10n->get('SYS_NAME'),
             $gL10n->get('PLG_REQUIREMENTS_PROVIDER_SHORT_NAME'),
@@ -39,7 +43,7 @@ class ProviderPresenter extends RequirementsPresenter
         );
 
         $rows = array();
-        foreach ((new ProviderService($gDb))->findVisible() as $provider) {
+        foreach ((new ProviderService($gDb))->findVisible($query) as $provider) {
             $editable = $this->isAdmin() || (int) $provider['rqp_usr_id_create'] === (int) $gCurrentUserId;
             $rowId = 'adm_requirements_provider_' . $provider['rqp_uuid'];
             $editUrl = $this->pageUrl('providers.php', array('mode' => 'edit', 'uuid' => $provider['rqp_uuid']));
@@ -91,7 +95,7 @@ class ProviderPresenter extends RequirementsPresenter
     /**
      * @throws Exception|\Smarty\Exception
      */
-    public function createEditForm(string $providerUUID): void
+    public function createEditForm(string $providerUUID, string $returnUrl = ''): void
     {
         global $gDb, $gL10n, $gCurrentSession;
 
@@ -110,7 +114,7 @@ class ProviderPresenter extends RequirementsPresenter
         $form = new FormPresenter(
             'adm_requirements_provider_edit_form',
             'requirements.provider.edit.tpl',
-            $this->pageUrl('providers.php', array('mode' => 'save', 'uuid' => $providerUUID)),
+            $this->pageUrl('providers.php', array('mode' => 'save', 'uuid' => $providerUUID, 'return' => $returnUrl)),
             $this
         );
         $form->addInput(

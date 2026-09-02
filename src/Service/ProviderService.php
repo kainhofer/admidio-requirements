@@ -74,11 +74,12 @@ final class ProviderService
     }
 
     /**
-     * Read every provider that the current user may see in the current organization.
+     * Read every provider that the current user may see in the current organization,
+     * optionally narrowed to a free-text search on name and short name.
      *
      * @return array<int,array<string,mixed>>
      */
-    public function findVisible(): array
+    public function findVisible(string $query = ''): array
     {
         global $gCurrentOrgId, $gCurrentUserId;
 
@@ -91,6 +92,11 @@ final class ProviderService
         if (!Component::isAdministrable(RequirementsPlugin::ID)) {
             $sql .= ' AND (rqp_public = true OR rqp_usr_id_create = ?)';
             $params[] = (int) $gCurrentUserId;
+        }
+        if ($query !== '') {
+            $sql .= ' AND (rqp_name LIKE ? OR rqp_short_name LIKE ?)';
+            $params[] = '%' . $query . '%';
+            $params[] = '%' . $query . '%';
         }
         $sql .= ' ORDER BY rqp_qualified DESC, rqp_name';
 

@@ -3,12 +3,18 @@
 
     {include 'sys-template-parts/form.input.tpl' data=$elements['adm_csrf_token']}
     <div class="card admidio-field-group">
+        <div class="card-header">{$l10n->get('SYS_NAME')}</div>
         <div class="card-body">
             {include 'sys-template-parts/form.input.tpl' data=$elements['rqp_name']}
             {include 'sys-template-parts/form.input.tpl' data=$elements['rqp_short_name']}
             {include 'sys-template-parts/form.input.tpl' data=$elements['rqp_url']}
             {include 'sys-template-parts/form.multiline.tpl' data=$elements['rqp_address']}
             {include 'sys-template-parts/form.multiline.tpl' data=$elements['rqp_description']}
+        </div>
+    </div>
+    <div class="card admidio-field-group">
+        <div class="card-header">{$l10n->get('SYS_PROPERTIES')}</div>
+        <div class="card-body">
             {include 'sys-template-parts/form.checkbox.tpl' data=$elements['rqp_public']}
             {if isset($elements['rqp_qualified'])}
                 {include 'sys-template-parts/form.checkbox.tpl' data=$elements['rqp_qualified']}

@@ -55,7 +55,7 @@ final class ActivityService
         foreach (array(
             'rqa_title', 'rqa_description', 'rqa_url', 'rqa_location',
             'rqa_begin_date', 'rqa_begin_time', 'rqa_end_date', 'rqa_end_time',
-            'rqa_completion_date', 'rqa_examination_date', 'rqa_attendance', 'rqa_comments'
+            'rqa_certificate_date', 'rqa_attendance', 'rqa_comments'
         ) as $field) {
             if (array_key_exists($field, $values)) {
                 $activity->setValue($field, is_string($values[$field]) ? trim($values[$field]) : $values[$field]);
@@ -217,29 +217,39 @@ final class ActivityService
      * @return array<int,array<string,mixed>>
      * @throws Exception
      */
-    public function findActivities(?int $userId = null): array
+    public function findActivities(?int $userId = null, string $query = '', ?int $requirementTypeId = null): array
     {
-        global $gCurrentOrgId, $gCurrentUser;
+        global $gCurrentOrgId, $gCurrentUser, $gProfileFields;
+
+        $creditJoin = '';
+        $params = array(
+            (int) $gProfileFields->getProperty('FIRST_NAME', 'usf_id'),
+            (int) $gProfileFields->getProperty('LAST_NAME', 'usf_id')
+        );
+        $creditColumns = 'NULL AS rac_period_reference, NULL AS rac_credits_claimed, NULL AS rac_credits_accepted';
+        if ($requirementTypeId !== null) {
+            $creditColumns = 'rac.rac_period_reference, rac.rac_credits_claimed, rac.rac_credits_accepted';
+            $creditJoin = ' LEFT JOIN ' . RequirementsTables::activityCredits() . ' AS rac
+                    ON rac.rac_activity_id = rqa.rqa_id AND rac.rac_requirement_type_id = ?';
+            $params[] = $requirementTypeId;
+        }
 
         $sql = 'SELECT rqa.rqa_id, rqa.rqa_uuid, rqa.rqa_org_id, rqa.rqa_user_id, rqa.rqa_title, rqa.rqa_begin_date,
-                       rqa.rqa_end_date, rqa.rqa_completion_date, rqa.rqa_status, rqa.rqa_review_status,
+                       rqa.rqa_end_date, rqa.rqa_status, rqa.rqa_review_status,
                        rqa.rqa_provider_name, rqa.rqa_provider_short_name,
                        usr.usr_uuid AS user_uuid,
-                       first_name.usd_value AS first_name, last_name.usd_value AS last_name
+                       first_name.usd_value AS first_name, last_name.usd_value AS last_name,
+                       ' . $creditColumns . '
                   FROM ' . RequirementsTables::activities() . ' AS rqa
             INNER JOIN ' . TBL_USERS . ' AS usr ON usr.usr_id = rqa.rqa_user_id
              LEFT JOIN ' . TBL_USER_DATA . ' AS first_name
                     ON first_name.usd_usr_id = rqa.rqa_user_id AND first_name.usd_usf_id = ?
              LEFT JOIN ' . TBL_USER_DATA . ' AS last_name
-                    ON last_name.usd_usr_id = rqa.rqa_user_id AND last_name.usd_usf_id = ?
+                    ON last_name.usd_usr_id = rqa.rqa_user_id AND last_name.usd_usf_id = ?'
+             . $creditJoin . '
                  WHERE rqa.rqa_org_id = ?';
 
-        global $gProfileFields;
-        $params = array(
-            (int) $gProfileFields->getProperty('FIRST_NAME', 'usf_id'),
-            (int) $gProfileFields->getProperty('LAST_NAME', 'usf_id'),
-            (int) $gCurrentOrgId
-        );
+        $params[] = (int) $gCurrentOrgId;
 
         if (!Component::isAdministrable(RequirementsPlugin::ID)) {
             $sql .= ' AND rqa.rqa_user_id = ?';
@@ -247,6 +257,11 @@ final class ActivityService
         } elseif ($userId !== null) {
             $sql .= ' AND rqa.rqa_user_id = ?';
             $params[] = $userId;
+        }
+        if ($query !== '') {
+            $sql .= ' AND (rqa.rqa_title LIKE ? OR rqa.rqa_provider_name LIKE ?)';
+            $params[] = '%' . $query . '%';
+            $params[] = '%' . $query . '%';
         }
         $sql .= ' ORDER BY rqa.rqa_begin_date DESC, rqa.rqa_title';
 
@@ -360,7 +375,7 @@ final class ActivityService
 
     private function validateDates(Activity $activity): void
     {
-        foreach (array('rqa_begin_date', 'rqa_end_date', 'rqa_completion_date', 'rqa_examination_date') as $field) {
+        foreach (array('rqa_begin_date', 'rqa_end_date', 'rqa_certificate_date') as $field) {
             $value = $activity->getValue($field, 'database');
             if ($value === null || $value === '') {
                 continue;

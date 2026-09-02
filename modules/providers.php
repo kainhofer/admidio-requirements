@@ -27,19 +27,27 @@ try {
         'defaultValue' => 'list',
         'validValues' => array('list', 'edit', 'save', 'delete')
     ));
+    // No defaultValue here: admFuncVariableIsValid() only returns early for a missing parameter
+    // when none is set, otherwise it would validate the empty string against the datatype.
     $getUuid = admFuncVariableIsValid($_GET, 'uuid', 'uuid');
+    $getQuery = admFuncVariableIsValid($_GET, 'query', 'string');
+    $getReturn = admFuncVariableIsValid($_GET, 'return', 'url');
+    // Only an Admidio URL is an acceptable redirect target.
+    if ($getReturn !== '' && !str_starts_with($getReturn, ADMIDIO_URL)) {
+        $getReturn = '';
+    }
 
     switch ($getMode) {
         case 'list':
             $page = new ProviderPresenter();
-            $page->createList();
+            $page->createList($getQuery);
             $gNavigation->addStartUrl(CURRENT_URL, $page->getHeadline(), 'bi-shop');
             $page->show();
             break;
 
         case 'edit':
             $page = new ProviderPresenter($getUuid);
-            $page->createEditForm($getUuid);
+            $page->createEditForm($getUuid, $getReturn);
             $gNavigation->addUrl(CURRENT_URL, $page->getHeadline());
             $page->show();
             break;
@@ -69,7 +77,10 @@ try {
             (new ProviderService($gDb))->save($provider, $values);
 
             $gNavigation->deleteLastUrl();
-            echo json_encode(array('status' => 'success', 'url' => $gNavigation->getUrl()));
+            echo json_encode(array(
+                'status' => 'success',
+                'url' => $getReturn !== '' ? $getReturn : $gNavigation->getUrl()
+            ));
             break;
 
         case 'delete':

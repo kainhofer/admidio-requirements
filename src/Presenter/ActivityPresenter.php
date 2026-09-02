@@ -5,6 +5,7 @@ use Admidio\Infrastructure\Exception;
 use Admidio\Infrastructure\Utils\SecurityUtils;
 use Admidio\UI\Presenter\FormPresenter;
 use AdmidioPlugin\Requirements\Entity\Activity;
+use AdmidioPlugin\Requirements\Entity\RequirementType;
 use AdmidioPlugin\Requirements\Service\ActivityService;
 use AdmidioPlugin\Requirements\Service\FulfilmentService;
 use AdmidioPlugin\Requirements\Service\ProviderService;
@@ -38,81 +39,138 @@ class ActivityPresenter extends RequirementsPresenter
     /**
      * @throws Exception|\Smarty\Exception
      */
-    public function createList(): void
+    public function createList(string $query = '', string $requirementUuid = ''): void
     {
         global $gDb, $gL10n, $gCurrentUser;
 
         $this->setHtmlID('adm_requirements_activities');
         $this->setHeadline($gL10n->get('PLG_REQUIREMENTS_ACTIVITIES'));
 
+        $userId = (int) $gCurrentUser->getValue('usr_id');
+        $isAdmin = $this->isAdmin();
+        $fulfilment = new FulfilmentService($gDb);
+        $applicableIds = $fulfilment->applicableRequirementTypeIds($userId);
+        $allTypes = (new RequirementTypeService($gDb))->findTypes();
+
+        // Requirement-type filter — default to the first applicable type, then any type.
+        $selectedType = null;
+        foreach ($allTypes as $t) {
+            if ($requirementUuid !== '' && $t['rqt_uuid'] === $requirementUuid) {
+                $selectedType = $t;
+                break;
+            }
+        }
+        if ($selectedType === null) {
+            foreach ($allTypes as $t) {
+                if (in_array((int) $t['rqt_id'], $applicableIds, true)) {
+                    $selectedType = $t;
+                    break;
+                }
+            }
+            $selectedType ??= $allTypes[0] ?? null;
+        }
+        $selectedTypeId = $selectedType !== null ? (int) $selectedType['rqt_id'] : null;
+        $selectedKind = 'date';
+        if ($selectedType !== null) {
+            $typeEntity = new RequirementType($gDb);
+            $typeEntity->setArray($selectedType);
+            $selectedKind = FulfilmentService::periodControlKind($typeEntity);
+        }
+
+        $typeOptions = array();
+        foreach ($allTypes as $t) {
+            $typeOptions[] = array(
+                'uuid' => $t['rqt_uuid'],
+                'name' => SecurityUtils::encodeHTML((string) $t['rqt_name']),
+                'selected' => $selectedType !== null && $t['rqt_uuid'] === $selectedType['rqt_uuid']
+            );
+        }
+        $this->assignSmartyVariable('searchUrl', $this->plugin->getUrl('index.php'));
+        $this->assignSmartyVariable('query', $query);
+        $this->assignSmartyVariable('typeOptions', $typeOptions);
+        $this->assignSmartyVariable('searchPlaceholder', $gL10n->get('PLG_REQUIREMENTS_SEARCH_ACTIVITIES'));
+
         $this->addPageFunctionsMenuItem(
             'menu_item_requirements_activity_add',
             $gL10n->get('SYS_CREATE_VAR', array($gL10n->get('PLG_REQUIREMENTS_ACTIVITY'))),
-            $this->pageUrl('activities.php', array('mode' => 'edit')),
+            $this->pageUrl('index.php', array('mode' => 'edit')),
             'bi-plus-circle-fill'
         );
-        if ($this->isAdmin()) {
-            $this->addPageFunctionsMenuItem(
-                'menu_item_requirements_providers',
-                $gL10n->get('PLG_REQUIREMENTS_PROVIDERS'),
-                $this->pageUrl('providers.php'),
-                'bi-shop'
-            );
-            $this->addPageFunctionsMenuItem(
-                'menu_item_requirements_rules',
-                $gL10n->get('PLG_REQUIREMENTS_REQUIREMENT_TYPES'),
-                $this->pageUrl('rules.php'),
-                'bi-list-check'
-            );
-        }
-
-        // Fulfilment overview widget (current user, current + N previous years)
-        $previousYears = (int) (RequirementsPlugin::setting(RequirementsPlugin::SETTING_OVERVIEW_PREVIOUS_YEARS) ?? 4);
-        $overview = (new FulfilmentService($gDb))->coverageHistoryForUser(
-            (int) $gCurrentUser->getValue('usr_id'),
-            $previousYears
-        );
-        $this->assignSmartyVariable('overview', $overview);
-
-        // Activity table
-        $isAdmin = $this->isAdmin();
-        $headers = array($gL10n->get('SYS_TITLE'));
         if ($isAdmin) {
-            $headers[] = $gL10n->get('SYS_MEMBER');
+            $this->addPageFunctionsMenuItem('menu_item_requirements_providers',
+                $gL10n->get('PLG_REQUIREMENTS_PROVIDERS'), $this->pageUrl('providers.php'), 'bi-shop');
+            $this->addPageFunctionsMenuItem('menu_item_requirements_rules',
+                $gL10n->get('PLG_REQUIREMENTS_REQUIREMENT_TYPES'), $this->pageUrl('rules.php'), 'bi-list-check');
         }
-        $headers[] = $gL10n->get('PLG_REQUIREMENTS_BEGIN_DATE');
+
+        // Fulfilment overview bars — running + N previous periods, applicable requirements only.
+        $previousPeriods = (int) (RequirementsPlugin::setting(RequirementsPlugin::SETTING_OVERVIEW_PREVIOUS_YEARS) ?? 4);
+        $overview = $fulfilment->coverageHistoryForUser($userId, $previousPeriods);
+        $this->assignSmartyVariable('overview', $overview);
+        // Say so rather than silently hiding the card when nothing applies to this member.
+        $this->assignSmartyVariable(
+            'overviewHint',
+            $overview === array() && $allTypes !== array() ? $gL10n->get('PLG_REQUIREMENTS_OVERVIEW_NONE') : ''
+        );
+
+        // Table: title | credited period + credits for the selected requirement | provider
+        $headers = array(
+            $gL10n->get('SYS_TITLE'),
+            $gL10n->get('PLG_REQUIREMENTS_CREDITED_PERIOD'),
+            $gL10n->get('PLG_REQUIREMENTS_CREDITS_CLAIMED')
+        );
+        if ($isAdmin) {
+            $headers[] = $gL10n->get('PLG_REQUIREMENTS_CREDITS_ACCEPTED');
+        }
         $headers[] = $gL10n->get('PLG_REQUIREMENTS_PROVIDER');
-        $headers[] = $gL10n->get('PLG_REQUIREMENTS_STATUS');
         $headers[] = '';
 
         $rows = array();
-        foreach ((new ActivityService($gDb))->findActivities() as $activity) {
+        foreach ((new ActivityService($gDb))->findActivities(null, $query, $selectedTypeId) as $activity) {
             $rowId = 'adm_requirements_activity_' . $activity['rqa_uuid'];
-            $editUrl = $this->pageUrl('activities.php', array('mode' => 'edit', 'uuid' => $activity['rqa_uuid']));
+            $editUrl = $this->pageUrl('index.php', array('mode' => 'edit', 'uuid' => $activity['rqa_uuid']));
 
             $entity = new Activity($gDb);
             $entity->setArray($activity);
             $editable = $entity->isEditable();
 
-            $data = array('<a href="' . $editUrl . '">' . SecurityUtils::encodeHTML((string) $activity['rqa_title']) . '</a>');
-            if ($isAdmin) {
-                $data[] = SecurityUtils::encodeHTML(trim(($activity['last_name'] ?? '') . ', ' . ($activity['first_name'] ?? ''), ', '));
+            $periodText = '';
+            if ($activity['rac_period_reference'] !== null) {
+                $parts = FulfilmentService::periodControlValue($selectedKind, (string) $activity['rac_period_reference']);
+                $periodText = $parts['quarter'] !== '' ? $parts['value'] . ' Q' . $parts['quarter'] : $parts['value'];
             }
-            $data[] = (string) $activity['rqa_begin_date'];
-            $data[] = SecurityUtils::encodeHTML((string) ($activity['rqa_provider_name'] ?? ''));
-            $data[] = $gL10n->get(self::statusLabel((string) $activity['rqa_status']));
+            $provider = (string) ($activity['rqa_provider_short_name'] ?? '');
+            if ($provider === '') {
+                $provider = (string) ($activity['rqa_provider_name'] ?? '');
+            }
+
+            $data = array(
+                '<a href="' . $editUrl . '">' . SecurityUtils::encodeHTML((string) $activity['rqa_title']) . '</a>',
+                SecurityUtils::encodeHTML($periodText),
+                self::formatCredits($activity['rac_credits_claimed'])
+            );
+            if ($isAdmin) {
+                $data[] = self::formatCredits($activity['rac_credits_accepted']);
+            }
+            $data[] = SecurityUtils::encodeHTML($provider);
 
             $actions = array();
             $actions[] = array('url' => $editUrl, 'icon' => 'bi bi-pencil-square', 'tooltip' => $gL10n->get('SYS_EDIT'));
             if ($editable) {
                 $actions[] = $this->deleteAction(
                     $rowId,
-                    $this->pageUrl('activities.php', array('mode' => 'delete', 'uuid' => $activity['rqa_uuid'])),
+                    $this->pageUrl('index.php', array('mode' => 'delete', 'uuid' => $activity['rqa_uuid'])),
                     $gL10n->get('SYS_WANT_DELETE_ENTRY', array($activity['rqa_title']))
                 );
             }
 
-            $rows[] = array('id' => $rowId, 'uuid' => $activity['rqa_uuid'], 'data' => $data, 'actions' => $actions);
+            $rows[] = array(
+                'id' => $rowId,
+                'uuid' => $activity['rqa_uuid'],
+                'data' => $data,
+                'actions' => $actions,
+                'statusIcon' => $this->statusIcon($activity)
+            );
         }
 
         $this->assignSmartyVariable('headers', $headers);
@@ -121,12 +179,51 @@ class ActivityPresenter extends RequirementsPresenter
         $this->addHtmlByTemplate('requirements.activities.list.tpl');
     }
 
+    private static function formatCredits(mixed $value): string
+    {
+        if ($value === null || $value === '') {
+            return '';
+        }
+        return rtrim(rtrim(number_format((float) $value, 2, '.', ''), '0'), '.');
+    }
+
+    /**
+     * The activity status as a coloured dot for the actions column: draft is amber, submitted is
+     * green and withdrawn is red. A review verdict, where one exists, is added to the tooltip.
+     */
+    private function statusIcon(array $activity): string
+    {
+        global $gL10n;
+
+        [$icon, $colour, $textKey] = match ((string) ($activity['rqa_status'] ?? '')) {
+            'draft' => array('bi-pencil-fill', 'text-warning', 'PLG_REQUIREMENTS_STATUS_DRAFT'),
+            'withdrawn' => array('bi-x-circle-fill', 'text-danger', 'PLG_REQUIREMENTS_STATUS_WITHDRAWN'),
+            default => array('bi-check-circle-fill', 'text-success', 'PLG_REQUIREMENTS_STATUS_SUBMITTED')
+        };
+
+        $tooltip = $gL10n->get($textKey);
+        $reviewKey = match ((string) ($activity['rqa_review_status'] ?? '')) {
+            'open' => 'PLG_REQUIREMENTS_REVIEW_OPEN',
+            'accepted' => 'PLG_REQUIREMENTS_REVIEW_ACCEPTED',
+            'partially_accepted' => 'PLG_REQUIREMENTS_REVIEW_PARTIALLY_ACCEPTED',
+            'not_accepted' => 'PLG_REQUIREMENTS_REVIEW_NOT_ACCEPTED',
+            'clarification' => 'PLG_REQUIREMENTS_REVIEW_CLARIFICATION',
+            default => ''
+        };
+        if ($reviewKey !== '') {
+            $tooltip .= ' – ' . $gL10n->get($reviewKey);
+        }
+
+        return '<i class="bi ' . $icon . ' ' . $colour . '" data-bs-toggle="tooltip" title="'
+            . SecurityUtils::encodeHTML($tooltip) . '"></i> ';
+    }
+
     /**
      * @throws Exception|\Smarty\Exception
      */
     public function createEditForm(string $activityUUID): void
     {
-        global $gDb, $gL10n, $gCurrentSession;
+        global $gDb, $gL10n, $gCurrentSession, $gCurrentUser;
 
         $activity = new Activity($gDb);
         $existingCredits = array();
@@ -142,11 +239,19 @@ class ActivityPresenter extends RequirementsPresenter
         }
         $this->setHtmlID('adm_requirements_activity_edit');
 
+        $returnUrl = $this->pageUrl('index.php', array('mode' => 'edit', 'uuid' => $activityUUID));
+        $this->addPageFunctionsMenuItem(
+            'menu_item_requirements_provider_add',
+            $gL10n->get('PLG_REQUIREMENTS_PROVIDER_CREATE'),
+            $this->pageUrl('providers.php', array('mode' => 'edit', 'return' => $returnUrl)),
+            'bi-plus-circle-fill'
+        );
+
         $isAdmin = $this->isAdmin();
         $form = new FormPresenter(
             'adm_requirements_activity_edit_form',
             'requirements.activity.edit.tpl',
-            $this->pageUrl('activities.php', array('mode' => 'save', 'uuid' => $activityUUID)),
+            $this->pageUrl('index.php', array('mode' => 'save', 'uuid' => $activityUUID)),
             $this
         );
 
@@ -158,24 +263,47 @@ class ActivityPresenter extends RequirementsPresenter
             $providers[(int) $provider['rqp_id']] = $provider['rqp_name']
                 . ($provider['rqp_qualified'] ? ' ★' : '');
         }
+        $providers['__new__'] = '＋ ' . $gL10n->get('PLG_REQUIREMENTS_PROVIDER_CREATE_NEW');
         $form->addSelectBox('rqa_provider_id', $gL10n->get('PLG_REQUIREMENTS_PROVIDER'), $providers,
-            array('defaultValue' => (int) $activity->getValue('rqa_provider_id')));
+            array('defaultValue' => (int) $activity->getValue('rqa_provider_id'),
+                'showContextDependentFirstEntry' => false,
+                'helpTextId' => 'PLG_REQUIREMENTS_PROVIDER_CREATE_NEW_HELP'));
 
-        $form->addInput('rqa_begin_date', $gL10n->get('PLG_REQUIREMENTS_BEGIN_DATE'),
-            (string) $activity->getValue('rqa_begin_date'),
-            array('type' => 'date', 'property' => FormPresenter::FIELD_REQUIRED));
-        $form->addInput('rqa_begin_time', $gL10n->get('SYS_TIME'), (string) $activity->getValue('rqa_begin_time'),
-            array('type' => 'time'));
-        $form->addInput('rqa_end_date', $gL10n->get('SYS_END'), (string) $activity->getValue('rqa_end_date'),
-            array('type' => 'date'));
-        $form->addInput('rqa_end_time', $gL10n->get('SYS_TIME'), (string) $activity->getValue('rqa_end_time'),
-            array('type' => 'time'));
-        $form->addInput('rqa_completion_date', $gL10n->get('PLG_REQUIREMENTS_COMPLETION_DATE'),
-            (string) $activity->getValue('rqa_completion_date'), array('type' => 'date'));
-        $form->addInput('rqa_examination_date', $gL10n->get('PLG_REQUIREMENTS_EXAMINATION_DATE'),
-            (string) $activity->getValue('rqa_examination_date'), array('type' => 'date'));
+        $beginTime = (string) $activity->getValue('rqa_begin_time', 'database');
+        $endTime = (string) $activity->getValue('rqa_end_time', 'database');
+        $form->addCheckbox('rqa_full_day', $gL10n->get('PLG_REQUIREMENTS_FULL_DAY'),
+            $beginTime === '' && $endTime === '',
+            array('helpTextId' => 'PLG_REQUIREMENTS_FULL_DAY_DESC'));
+        $form->addInput('rqa_begin', $gL10n->get('SYS_START'),
+            self::dateTimeValue((string) $activity->getValue('rqa_begin_date', 'database'), $beginTime),
+            array('type' => 'datetime', 'property' => FormPresenter::FIELD_REQUIRED));
+        $form->addInput('rqa_end', $gL10n->get('SYS_END'),
+            self::dateTimeValue((string) $activity->getValue('rqa_end_date', 'database'), $endTime),
+            array('type' => 'datetime'));
+
+        // Toggle the two time inputs with the full-day checkbox; keep begin <= end.
+        $this->addJavascript('
+            function admReqToggleFullDay() {
+                var t = $("#rqa_begin_time, #rqa_end_time");
+                if ($("#rqa_full_day").is(":checked")) {
+                    t.val("00:00").closest("div").hide();
+                } else {
+                    t.closest("div").show();
+                }
+            }
+            admReqToggleFullDay();
+            $("#rqa_full_day").on("change", admReqToggleFullDay);
+            $("#rqa_begin").on("change", function () {
+                if ($("#rqa_end").val() === "" || $("#rqa_end").val() < $("#rqa_begin").val()) {
+                    $("#rqa_end").val($("#rqa_begin").val());
+                }
+            });
+        ', true);
         $form->addInput('rqa_attendance', $gL10n->get('PLG_REQUIREMENTS_ATTENDANCE'),
             (string) $activity->getValue('rqa_attendance'), array('type' => 'number', 'minNumber' => 0, 'step' => 0.01));
+        $form->addInput('rqa_certificate_date', $gL10n->get('PLG_REQUIREMENTS_CERTIFICATE_DATE'),
+            (string) $activity->getValue('rqa_certificate_date', 'database'),
+            array('type' => 'date', 'helpTextId' => 'PLG_REQUIREMENTS_CERTIFICATE_DATE_HELP'));
         $form->addInput('rqa_url', $gL10n->get('SYS_WEBSITE'), (string) $activity->getValue('rqa_url'),
             array('maxLength' => 2000, 'type' => 'url'));
         $form->addMultilineTextInput('rqa_location', $gL10n->get('PLG_REQUIREMENTS_LOCATION'),
@@ -185,36 +313,117 @@ class ActivityPresenter extends RequirementsPresenter
         $form->addMultilineTextInput('rqa_comments', $gL10n->get('SYS_COMMENT'),
             (string) $activity->getValue('rqa_comments'), 3);
 
-        // Credit inputs, one block per creditable requirement type.
+        // Credit inputs, one compact row per creditable requirement type. Rows for requirements that
+        // currently apply to the member (or that already carry a credit) are shown; the rest are
+        // hidden and offered through the "add another requirement" selector. Every field stays a
+        // registered form element so validate() accepts the payload; the template does the layout.
+        $targetUserId = $activityUUID !== ''
+            ? (int) $activity->getValue('rqa_user_id')
+            : (int) $gCurrentUser->getValue('usr_id');
+        $applicable = array_flip((new FulfilmentService($gDb))->applicableRequirementTypeIds($targetUserId));
+
+        $defaultPeriodDate = (string) $activity->getValue('rqa_begin_date', 'database');
+        $maxYear = (string) ((int) date('Y') + 1);
+
         $creditFields = array();
+        $optionalCreditTypes = array();
         foreach ($this->creditableTypes($existingCredits) as $type) {
             $typeId = (int) $type['rqt_id'];
             $current = $existingCredits[$typeId] ?? null;
+            $shown = $current !== null || isset($applicable[$typeId]);
+
+            $typeEntity = new RequirementType($gDb);
+            $typeEntity->setArray($type);
+            $kind = FulfilmentService::periodControlKind($typeEntity);
+
             $claimedField = 'credit_' . $typeId;
             $periodField = 'period_' . $typeId;
+            $quarterField = 'periodq_' . $typeId;
+            $acceptedField = 'accepted_' . $typeId;
 
-            $form->addInput($claimedField,
-                $gL10n->get('PLG_REQUIREMENTS_CREDITS_FOR', array($type['rqt_name'])),
+            $form->addInput($claimedField, $gL10n->get('PLG_REQUIREMENTS_CREDITS_CLAIMED'),
                 (string) ($current['rac_credits_claimed'] ?? ''),
                 array('type' => 'number', 'minNumber' => 0, 'step' => 0.01));
-            $form->addInput($periodField,
-                $gL10n->get('PLG_REQUIREMENTS_CREDITED_PERIOD'),
-                (string) ($current['rac_period_reference'] ?? ''),
-                array('type' => 'date', 'helpTextId' => 'PLG_REQUIREMENTS_CREDITED_PERIOD_HELP'));
-
-            $fieldNames = array($claimedField, $periodField);
+            // Registered so validate() accepts the payload; rendered by the template as a native
+            // month/week picker, a year field or a date field depending on $kind.
+            $form->addInput($periodField, $gL10n->get('PLG_REQUIREMENTS_CREDITED_PERIOD'),
+                (string) ($current['rac_period_reference'] ?? ''));
+            if ($kind === 'quarter') {
+                $form->addSelectBox($quarterField, $gL10n->get('PLG_REQUIREMENTS_PERIOD_QUARTER'),
+                    array('1' => 'Q1', '2' => 'Q2', '3' => 'Q3', '4' => 'Q4'),
+                    array('showContextDependentFirstEntry' => false));
+            }
             if ($isAdmin) {
-                $acceptedField = 'accepted_' . $typeId;
-                $form->addInput($acceptedField,
-                    $gL10n->get('PLG_REQUIREMENTS_CREDITS_ACCEPTED'),
+                $form->addInput($acceptedField, $gL10n->get('PLG_REQUIREMENTS_CREDITS_ACCEPTED'),
                     $current === null || $current['rac_credits_accepted'] === null
                         ? '' : (string) $current['rac_credits_accepted'],
-                    array('type' => 'number', 'minNumber' => 0, 'step' => 0.01,
-                        'helpTextId' => 'PLG_REQUIREMENTS_CREDITS_ACCEPTED_HELP'));
-                $fieldNames[] = $acceptedField;
+                    array('type' => 'number', 'minNumber' => 0, 'step' => 0.01));
             }
-            $creditFields[] = array('name' => SecurityUtils::encodeHTML((string) $type['rqt_name']), 'fields' => $fieldNames);
+
+            $ref = (string) ($current['rac_period_reference'] ?? $defaultPeriodDate);
+            $parts = FulfilmentService::periodControlValue($kind, $ref);
+
+            $creditFields[] = array(
+                'typeId' => $typeId,
+                'name' => SecurityUtils::encodeHTML((string) $type['rqt_name']),
+                'shown' => $shown,
+                'kind' => $kind,
+                'maxYear' => $maxYear,
+                'periodId' => $periodField,
+                'quarterId' => $quarterField,
+                'periodValue' => SecurityUtils::encodeHTML($parts['value']),
+                'quarterValue' => $parts['quarter'],
+                'claimedId' => $claimedField,
+                'claimedValue' => SecurityUtils::encodeHTML((string) ($current['rac_credits_claimed'] ?? '')),
+                'acceptedId' => $isAdmin ? $acceptedField : '',
+                'acceptedValue' => SecurityUtils::encodeHTML(
+                    $current === null || $current['rac_credits_accepted'] === null
+                        ? '' : (string) $current['rac_credits_accepted']
+                )
+            );
+            if (!$shown) {
+                $optionalCreditTypes[$typeId] = SecurityUtils::encodeHTML((string) $type['rqt_name']);
+            }
         }
+        $this->assignSmartyVariable('optionalCreditTypes', $optionalCreditTypes);
+
+        // Prefill an empty credited period from the begin date, and reveal a hidden requirement row
+        // when it is picked from the selector.
+        $this->addJavascript('
+            function admReqIsoWeek(d) {
+                var t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+                t.setUTCDate(t.getUTCDate() + 4 - (t.getUTCDay() || 7));
+                var y = t.getUTCFullYear();
+                var w = Math.ceil((((t - Date.UTC(y, 0, 1)) / 86400000) + 1) / 7);
+                return y + "-W" + ("0" + w).slice(-2);
+            }
+            $("#rqa_begin").on("change.reqcredit", function () {
+                var v = $(this).val();
+                if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) { return; }
+                var jd = new Date(v + "T00:00:00");
+                $(".adm-req-period[data-kind]").each(function () {
+                    if ($(this).val() !== "") { return; }
+                    var k = $(this).attr("data-kind");
+                    if (k === "month") { $(this).val(v.substring(0, 7)); }
+                    else if (k === "week") { $(this).val(admReqIsoWeek(jd)); }
+                    else if (k === "year") { $(this).val(v.substring(0, 4)); }
+                    else if (k === "quarter") {
+                        $(this).val(v.substring(0, 4));
+                        $(this).closest(".input-group").find(".adm-req-period-quarter")
+                            .val(String(Math.floor(jd.getMonth() / 3) + 1));
+                    }
+                    else { $(this).val(v); }
+                });
+            });
+            $("#adm_req_add_credit").on("change", function () {
+                var id = $(this).val();
+                if (id === "") { return; }
+                $("#adm_req_credit_" + id).prop("hidden", false);
+                $(this).find("option[value=\'" + id + "\']").remove();
+                $(this).val("");
+                if ($(this).find("option").length <= 1) { $("#adm_req_add_credit_wrap").hide(); }
+            });
+        ', true);
 
         if ($isAdmin) {
             $form->addSelectBox('rqa_status', $gL10n->get('PLG_REQUIREMENTS_STATUS'), array(
@@ -249,12 +458,14 @@ class ActivityPresenter extends RequirementsPresenter
         $gCurrentSession->addFormObject($form);
     }
 
-    private static function statusLabel(string $status): string
+    /**
+     * Combine a stored date and time into the "Y-m-d H:i" value a datetime form field expects.
+     */
+    private static function dateTimeValue(string $date, string $time): string
     {
-        return match ($status) {
-            'draft' => 'PLG_REQUIREMENTS_STATUS_DRAFT',
-            'withdrawn' => 'PLG_REQUIREMENTS_STATUS_WITHDRAWN',
-            default => 'PLG_REQUIREMENTS_STATUS_SUBMITTED'
-        };
+        if ($date === '') {
+            return '';
+        }
+        return $date . ' ' . ($time === '' ? '00:00' : substr($time, 0, 5));
     }
 }

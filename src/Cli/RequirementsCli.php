@@ -503,8 +503,7 @@ final class RequirementsCli
             'title' => $activity->getValue('rqa_title'),
             'begin_date' => $activity->getValue('rqa_begin_date'),
             'end_date' => $activity->getValue('rqa_end_date'),
-            'completion_date' => $activity->getValue('rqa_completion_date'),
-            'examination_date' => $activity->getValue('rqa_examination_date'),
+            'certificate_date' => $activity->getValue('rqa_certificate_date'),
             'status' => $activity->getValue('rqa_status')
         );
     }
@@ -546,8 +545,7 @@ final class RequirementsCli
             'begin-time' => 'rqa_begin_time',
             'end' => 'rqa_end_date',
             'end-time' => 'rqa_end_time',
-            'completion' => 'rqa_completion_date',
-            'examination' => 'rqa_examination_date',
+            'certificate' => 'rqa_certificate_date',
             'comments' => 'rqa_comments',
             'status' => 'rqa_status',
             'review-status' => 'rqa_review_status',

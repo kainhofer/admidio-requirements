@@ -37,13 +37,14 @@ try {
     ));
     $getUuid = admFuncVariableIsValid($_GET, 'uuid', 'uuid');
     $getType = admFuncVariableIsValid($_GET, 'type', 'uuid');
+    $getQuery = admFuncVariableIsValid($_GET, 'query', 'string');
 
     $service = new RequirementTypeService($gDb);
 
     switch ($getMode) {
         case 'list':
             $page = new RulePresenter();
-            $page->createList();
+            $page->createList($getQuery);
             $gNavigation->addStartUrl(CURRENT_URL, $page->getHeadline(), 'bi-list-check');
             $page->show();
             break;

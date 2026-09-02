@@ -97,6 +97,7 @@ final class FulfilmentService
             $coverage = $required > 0.0 ? min(100.0, ($attained / $required) * 100.0) : null;
 
             $result[] = array(
+                'typeId' => (int)$type->getValue('rqt_id'),
                 'requirement' => (string)$type->getValue('rqt_name'),
                 'shortName' => (string)$type->getValue('rqt_short_name'),
                 'period' => $label,
@@ -114,71 +115,257 @@ final class FulfilmentService
     }
 
     /**
-     * Fulfilment of every yearly calendar requirement for the current year and the $previousYears
-     * years before it. Used by the overview widget on top of the activity list.
+     * Fulfilment of every calendar requirement the member's roles currently carry, for the running
+     * period and the $previousPeriods before it. Used by the overview bars above the activity list.
      *
-     * @return array<int,array{requirement:string,shortName:string,periods:array<int,array<string,mixed>>}>
+     * The period unit follows the requirement, so a yearly requirement yields years and a quarterly
+     * one quarters. Requirements without a role rule for this member are not shown at all.
+     *
+     * @return array<int,array{typeId:int,requirement:string,shortName:string,periods:array<int,array<string,mixed>>}>
      * @throws Exception
      */
-    public function coverageHistoryForUser(int $userId, int $previousYears = 4): array
+    public function coverageHistoryForUser(int $userId, int $previousPeriods = 4): array
     {
-        $previousYears = max(0, min(20, $previousYears));
-        $currentYear = (int) date('Y');
+        global $gCurrentOrgId, $gCurrentUser, $gValidLogin;
 
-        /** @var array<string,array{requirement:string,shortName:string,periods:array<string,array<string,mixed>>}> $byRequirement */
-        $byRequirement = array();
-
-        for ($year = $currentYear - $previousYears; $year <= $currentYear; ++$year) {
-            foreach ($this->coverageForUser($userId, $year . '-06-15') as $entry) {
-                if (($entry['period'] ?? null) !== (string) $year) {
-                    // Only yearly calendar requirements produce a bare-year period label.
-                    continue;
-                }
-
-                $key = $entry['shortName'] !== '' ? $entry['shortName'] : $entry['requirement'];
-                if (!array_key_exists($key, $byRequirement)) {
-                    $byRequirement[$key] = array(
-                        'requirement' => $entry['requirement'],
-                        'shortName' => $entry['shortName'],
-                        'periods' => array()
-                    );
-                }
-
-                $required = $entry['required'] === null ? 0.0 : (float) $entry['required'];
-                $attained = (float) $entry['attained'];
-                $byRequirement[$key]['periods'][(string) $year] = array(
-                    'label' => (string) $year,
-                    'attained' => round($attained, 2),
-                    'required' => $required > 0.0 ? round($required, 2) : null,
-                    'percent' => $required > 0.0 ? (int) round(min(100.0, ($attained / $required) * 100.0)) : null,
-                    'status' => $entry['status'],
-                    'warnings' => $entry['warnings']
-                );
-            }
+        if (!$gValidLogin
+            || !Component::isVisible(RequirementsPlugin::ID)
+            || (
+                $userId !== (int) $gCurrentUser->getValue('usr_id')
+                && !Component::isAdministrable(RequirementsPlugin::ID)
+            )) {
+            throw new Exception('SYS_NO_RIGHTS');
         }
 
+        $previousPeriods = max(0, min(20, $previousPeriods));
+        $applicable = $this->applicableRequirementTypeIds($userId);
+        if ($applicable === array()) {
+            return array();
+        }
+
+        $rows = $this->db->getArrayFromSql(
+            'SELECT * FROM ' . RequirementsTables::requirementTypes() . '
+              WHERE rqt_org_id = ? AND rqt_period_anchor = ?
+              ORDER BY rqt_sequence, rqt_name',
+            array((int) $gCurrentOrgId, 'calendar')
+        );
+
+        $today = self::date(DATE_NOW);
         $result = array();
-        foreach ($byRequirement as $requirement) {
-            $periods = array();
-            for ($year = $currentYear - $previousYears; $year <= $currentYear; ++$year) {
-                $periods[] = $requirement['periods'][(string) $year] ?? array(
-                    'label' => (string) $year,
-                    'attained' => 0.0,
-                    'required' => null,
-                    'percent' => null,
-                    'status' => 'none',
-                    'warnings' => array()
-                );
+
+        foreach ($rows as $row) {
+            $type = new RequirementType($this->db);
+            $type->setArray($row);
+            $typeId = (int) $type->getValue('rqt_id');
+
+            if (!in_array($typeId, $applicable, true) || (int) $type->getValue('rqt_period_count') !== 1) {
+                continue;
             }
+
+            // Walk back whole periods from the start of the running one, so no period is skipped.
+            $unit = (string) $type->getValue('rqt_period_unit');
+            [$anchor, $stepSize, $stepUnit] = match ($unit) {
+                'quarter' => array(self::periodFor($type, $today)[0], 3, 'months'),
+                'month' => array($today->modify('first day of this month'), 1, 'month'),
+                'week' => array($today->modify('monday this week'), 7, 'days'),
+                default => array($today->setDate((int) $today->format('Y'), 1, 1), 1, 'year')
+            };
+
+            $periods = array();
+            for ($i = $previousPeriods; $i >= 0; --$i) {
+                $reference = $i === 0
+                    ? $anchor
+                    : $anchor->modify('-' . ($i * $stepSize) . ' ' . $stepUnit);
+                $periods[] = $this->periodCoverage($type, $userId, $reference);
+            }
+
             $result[] = array(
-                'requirement' => $requirement['requirement'],
-                'shortName' => $requirement['shortName'],
+                'typeId' => $typeId,
+                'requirement' => (string) $type->getValue('rqt_name'),
+                'shortName' => (string) $type->getValue('rqt_short_name'),
                 'periods' => $periods
             );
         }
 
-        usort($result, static fn(array $a, array $b): int => strcasecmp($a['requirement'], $b['requirement']));
         return $result;
+    }
+
+    /**
+     * Required and attained credits of one requirement in the period that contains $reference.
+     *
+     * @return array<string,mixed>
+     * @throws Exception
+     */
+    private function periodCoverage(RequirementType $type, int $userId, DateTimeImmutable $reference): array
+    {
+        [$periodStart, $periodEnd, $label] = self::periodFor($type, $reference);
+
+        $rules = $this->loadRules($type, $periodStart, $periodEnd);
+        $roleIds = array_values(array_unique(array_map(
+            static fn(array $rule): int => (int) $rule['rrr_role_id'],
+            $rules
+        )));
+        $memberships = $this->loadMemberships($userId, $roleIds, $periodStart, $periodEnd);
+
+        [$required, $warnings] = $this->calculateRequired($type, $rules, $memberships, $periodStart, $periodEnd);
+
+        $credits = $this->loadCredits($userId, (int) $type->getValue('rqt_id'), $periodStart->format('Y-m-d'));
+        $attained = (float) array_sum(array_column($credits, 'effectiveCredits'));
+
+        if ($required > 0.0) {
+            $status = $attained >= $required ? 'fulfilled' : 'missing';
+        } else {
+            $status = $attained > 0.0 ? 'additional-credits' : 'none';
+        }
+
+        return array(
+            'label' => $label,
+            'periodReference' => $periodStart->format('Y-m-d'),
+            'attained' => round($attained, 2),
+            'required' => $required > 0.0 ? round($required, 2) : null,
+            'percent' => $required > 0.0 ? (int) round(min(100.0, ($attained / $required) * 100.0)) : null,
+            'status' => $status,
+            'warnings' => $warnings
+        );
+    }
+
+    /**
+     * IDs of the requirement types that currently apply to a user: those with at least one role
+     * rule for a role the user is a member of right now (membership active today, role category in
+     * the current organization).
+     *
+     * @return array<int,int>
+     */
+    public function applicableRequirementTypeIds(int $userId): array
+    {
+        global $gCurrentOrgId;
+
+        $rows = $this->db->queryPrepared(
+            'SELECT DISTINCT rrr.rrr_requirement_type_id
+               FROM ' . RequirementsTables::requirementRoleRules() . ' AS rrr
+         INNER JOIN ' . TBL_MEMBERS . ' AS mem
+                 ON mem.mem_rol_id = rrr.rrr_role_id
+                AND mem.mem_usr_id = ?
+                AND mem.mem_begin <= ?
+                AND mem.mem_end >= ?
+         INNER JOIN ' . TBL_ROLES . ' AS rol ON rol.rol_id = rrr.rrr_role_id
+         INNER JOIN ' . TBL_CATEGORIES . ' AS cat ON cat.cat_id = rol.rol_cat_id
+              WHERE cat.cat_org_id = ?',
+            array($userId, DATE_NOW, DATE_NOW, (int) $gCurrentOrgId)
+        )->fetchAll(\PDO::FETCH_COLUMN);
+
+        return array_map('intval', $rows);
+    }
+
+    /**
+     * The kind of control the credited-period picker should use for a requirement type:
+     * year | quarter | month | week for calendar requirements, otherwise a plain date.
+     */
+    public static function periodControlKind(RequirementType $type): string
+    {
+        if ((string) $type->getValue('rqt_period_anchor') !== 'calendar') {
+            return 'date';
+        }
+        return match ((string) $type->getValue('rqt_period_unit')) {
+            'year' => 'year',
+            'quarter' => 'quarter',
+            'month' => 'month',
+            'week' => 'week',
+            default => 'date'
+        };
+    }
+
+    /**
+     * The value(s) a period control should be pre-filled with for a given Y-m-d reference date.
+     *
+     * @return array{value:string,quarter:string} value is the control's own value (year, YYYY-MM,
+     *         YYYY-Www or a date); quarter is "1".."4" for the quarter control, otherwise "".
+     */
+    public static function periodControlValue(string $kind, string $referenceYmd): array
+    {
+        $empty = array('value' => '', 'quarter' => '');
+        if ($referenceYmd === '') {
+            return $empty;
+        }
+        try {
+            $date = self::date(substr($referenceYmd, 0, 10));
+        } catch (Exception) {
+            return $empty;
+        }
+        $year = (int) $date->format('Y');
+        if ($year < 1900 || $year > (int) date('Y') + 1) {
+            return $empty;
+        }
+
+        return match ($kind) {
+            'year' => array('value' => $date->format('Y'), 'quarter' => ''),
+            'quarter' => array(
+                'value' => $date->format('Y'),
+                'quarter' => (string) (intdiv((int) $date->format('n') - 1, 3) + 1)
+            ),
+            'month' => array('value' => $date->format('Y-m'), 'quarter' => ''),
+            'week' => array('value' => $date->format('o-\WW'), 'quarter' => ''),
+            default => array('value' => $date->format('Y-m-d'), 'quarter' => '')
+        };
+    }
+
+    /**
+     * Turn the value(s) a credited-period control submitted into a Y-m-d date that
+     * normalizePeriodReference() can snap to the period start.
+     *
+     * @param string $raw     the control's own value (year, YYYY-MM, YYYY-Www or a date)
+     * @param string $quarter "1".."4" when the requirement uses a quarter control
+     * @throws Exception SYS_DATE_INVALID
+     */
+    public static function periodInputToDate(RequirementType $type, string $raw, string $quarter = ''): string
+    {
+        $raw = trim($raw);
+        $maxYear = (int) date('Y') + 1;
+        $kind = self::periodControlKind($type);
+
+        switch ($kind) {
+            case 'year':
+                if (preg_match('/^(\d{4})$/', $raw, $m) === 1) {
+                    $year = (int) $m[1];
+                    if ($year >= 1900 && $year <= $maxYear) {
+                        return $year . '-01-01';
+                    }
+                }
+                break;
+
+            case 'quarter':
+                if (preg_match('/^(\d{4})$/', $raw, $m) === 1
+                    && preg_match('/^[1-4]$/', $quarter) === 1) {
+                    $year = (int) $m[1];
+                    if ($year >= 1900 && $year <= $maxYear) {
+                        return sprintf('%04d-%02d-01', $year, (((int) $quarter) - 1) * 3 + 1);
+                    }
+                }
+                break;
+
+            case 'month':
+                if (preg_match('/^(\d{4})-(\d{2})$/', $raw, $m) === 1
+                    && (int) $m[2] >= 1 && (int) $m[2] <= 12) {
+                    return $raw . '-01';
+                }
+                break;
+
+            case 'week':
+                if (preg_match('/^(\d{4})-W(\d{2})$/', $raw, $m) === 1
+                    && (int) $m[2] >= 1 && (int) $m[2] <= 53) {
+                    return (new DateTimeImmutable())->setISODate((int) $m[1], (int) $m[2], 1)->format('Y-m-d');
+                }
+                break;
+
+            default:
+                $date = self::date($raw);
+                if ((int) $date->format('Y') < 1900 || (int) $date->format('Y') > $maxYear) {
+                    break;
+                }
+                return $date->format('Y-m-d');
+        }
+
+        throw new Exception('SYS_DATE_INVALID');
     }
 
     public static function normalizePeriodReference(RequirementType $type, string $reference): string

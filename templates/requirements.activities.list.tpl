@@ -1,5 +1,4 @@
 <style>
-    .adm-req-overview { margin-bottom: 1.5rem; }
     .adm-req-overview .adm-req-row { display: flex; align-items: center; gap: 1rem; padding: .35rem 0; border-bottom: 1px solid var(--bs-border-color, #dee2e6); }
     .adm-req-overview .adm-req-name { flex: 0 0 12rem; font-weight: 600; }
     .adm-req-overview .adm-req-bars { display: flex; gap: .5rem; flex-wrap: wrap; flex: 1 1 auto; }
@@ -13,8 +12,15 @@
     .adm-req-overview .adm-req-val { font-size: .75rem; }
 </style>
 
+{if $overview|@count eq 0 and $overviewHint}
+    <div class="card admidio-field-group mb-3">
+        <div class="card-header">{$l10n->get('PLG_REQUIREMENTS_OVERVIEW_HEADLINE')}</div>
+        <div class="card-body"><p class="text-muted mb-0">{$overviewHint}</p></div>
+    </div>
+{/if}
+
 {if $overview|@count gt 0}
-    <div class="card admidio-field-group adm-req-overview">
+    <div class="card admidio-field-group adm-req-overview mb-3">
         <div class="card-header">{$l10n->get('PLG_REQUIREMENTS_OVERVIEW_HEADLINE')}</div>
         <div class="card-body">
             {foreach $overview as $req}
@@ -50,6 +56,29 @@
     </div>
 {/if}
 
+<div class="card admidio-field-group mb-3">
+    <div class="card-body">
+        <form method="get" action="{$searchUrl}" class="row g-2 align-items-end">
+            <input type="hidden" name="mode" value="list">
+            <div class="col-sm">
+                <label class="form-label small mb-1">{$l10n->get('PLG_REQUIREMENTS_REQUIREMENT_TYPE')}</label>
+                <select name="requirement" class="form-select" onchange="this.form.submit()">
+                    {foreach $typeOptions as $t}
+                        <option value="{$t.uuid}" {if $t.selected}selected{/if}>{$t.name nofilter}</option>
+                    {/foreach}
+                </select>
+            </div>
+            <div class="col-sm">
+                <label class="form-label small mb-1">{$l10n->get('PLG_REQUIREMENTS_SEARCH')}</label>
+                <input type="text" name="query" value="{$query}" class="form-control" placeholder="{$searchPlaceholder}">
+            </div>
+            <div class="col-auto">
+                <button type="submit" class="btn btn-secondary"><i class="bi bi-search"></i> {$l10n->get('PLG_REQUIREMENTS_SEARCH')}</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 {if $rows|@count eq 0}
     <div class="alert alert-info" role="alert">
         <i class="bi bi-info-circle-fill"></i> {$messageNoData}
@@ -66,7 +95,8 @@
                         {foreach $row.data as $cell}
                             <td style="word-break: break-word;">{$cell nofilter}</td>
                         {/foreach}
-                        <td class="text-end">
+                        <td class="text-end text-nowrap">
+                            {$row.statusIcon nofilter}
                             {include 'sys-template-parts/list.functions.tpl' data=$row}
                         </td>
                     </tr>

@@ -52,8 +52,7 @@ ChangelogService::registerCallback('getFieldTranslations', '', array(
     'rqp_qualified' => 'PLG_REQUIREMENTS_PROVIDER_QUALIFIED',
     'rqp_public' => 'PLG_REQUIREMENTS_PROVIDER_PUBLIC',
     'rqa_begin_date' => 'PLG_REQUIREMENTS_BEGIN_DATE',
-    'rqa_completion_date' => 'PLG_REQUIREMENTS_COMPLETION_DATE',
-    'rqa_examination_date' => 'PLG_REQUIREMENTS_EXAMINATION_DATE',
+    'rqa_certificate_date' => 'PLG_REQUIREMENTS_CERTIFICATE_DATE',
     'rac_period_reference' => 'PLG_REQUIREMENTS_CREDITED_PERIOD',
     'rac_credits_claimed' => 'PLG_REQUIREMENTS_CREDITS_CLAIMED',
     'rac_credits_accepted' => 'PLG_REQUIREMENTS_CREDITS_ACCEPTED'

@@ -183,19 +183,25 @@ final class RequirementTypeService
      *
      * @return array<int,array<string,mixed>>
      */
-    public function findTypes(): array
+    public function findTypes(string $query = ''): array
     {
         global $gCurrentOrgId;
 
-        return $this->db->getArrayFromSql(
-            'SELECT rqt_id, rqt_uuid, rqt_name, rqt_short_name, rqt_description,
-                    rqt_period_unit, rqt_period_count, rqt_period_anchor,
-                    rqt_multiple_roles_mode, rqt_active, rqt_sequence
-               FROM ' . RequirementsTables::requirementTypes() . '
-              WHERE rqt_org_id = ?
-              ORDER BY rqt_sequence, rqt_name',
-            array((int) $gCurrentOrgId)
-        );
+        $sql = 'SELECT rqt_id, rqt_uuid, rqt_name, rqt_short_name, rqt_description,
+                       rqt_period_unit, rqt_period_count, rqt_period_anchor,
+                       rqt_multiple_roles_mode, rqt_active, rqt_sequence
+                  FROM ' . RequirementsTables::requirementTypes() . '
+                 WHERE rqt_org_id = ?';
+        $params = array((int) $gCurrentOrgId);
+
+        if ($query !== '') {
+            $sql .= ' AND (rqt_name LIKE ? OR rqt_short_name LIKE ?)';
+            $params[] = '%' . $query . '%';
+            $params[] = '%' . $query . '%';
+        }
+        $sql .= ' ORDER BY rqt_sequence, rqt_name';
+
+        return $this->db->getArrayFromSql($sql, $params);
     }
 
     /**

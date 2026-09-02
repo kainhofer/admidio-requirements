@@ -2,6 +2,7 @@
 namespace AdmidioPlugin\Requirements\Presenter;
 
 use Admidio\Infrastructure\Exception;
+use Admidio\Infrastructure\Language;
 use Admidio\Infrastructure\Utils\SecurityUtils;
 use Admidio\UI\Presenter\FormPresenter;
 use AdmidioPlugin\Requirements\Entity\RequirementRoleRule;
@@ -28,7 +29,7 @@ class RulePresenter extends RequirementsPresenter
     /**
      * @throws Exception|\Smarty\Exception
      */
-    public function createList(): void
+    public function createList(string $query = ''): void
     {
         global $gDb, $gL10n;
 
@@ -42,6 +43,10 @@ class RulePresenter extends RequirementsPresenter
             'bi-plus-circle-fill'
         );
 
+        $this->assignSmartyVariable('searchUrl', $this->plugin->getUrl('rules.php'));
+        $this->assignSmartyVariable('query', $query);
+        $this->assignSmartyVariable('searchPlaceholder', $gL10n->get('PLG_REQUIREMENTS_SEARCH_REQUIREMENTS'));
+
         $service = new RequirementTypeService($gDb);
         $rulesByType = array();
         foreach ($service->findRules() as $rule) {
@@ -49,7 +54,7 @@ class RulePresenter extends RequirementsPresenter
         }
 
         $types = array();
-        foreach ($service->findTypes() as $type) {
+        foreach ($service->findTypes($query) as $type) {
             $typeId = (int) $type['rqt_id'];
             $typeRules = array();
             foreach ($rulesByType[$typeId] ?? array() as $rule) {
@@ -77,8 +82,7 @@ class RulePresenter extends RequirementsPresenter
                 'rowId' => 'adm_requirements_type_' . $type['rqt_uuid'],
                 'name' => SecurityUtils::encodeHTML((string) $type['rqt_name']),
                 'shortName' => SecurityUtils::encodeHTML((string) $type['rqt_short_name']),
-                'period' => $type['rqt_period_count'] . ' × ' . $gL10n->get(self::periodUnitLabel((string) $type['rqt_period_unit']))
-                    . ' (' . $type['rqt_period_anchor'] . ')',
+                'period' => self::periodDescription($type, $gL10n),
                 'multipleRoles' => $type['rqt_multiple_roles_mode'],
                 'active' => (bool) $type['rqt_active'],
                 'editUrl' => $this->pageUrl('rules.php', array('mode' => 'type-edit', 'uuid' => $type['rqt_uuid'])),
@@ -268,5 +272,30 @@ class RulePresenter extends RequirementsPresenter
             'week' => 'PLG_REQUIREMENTS_PERIOD_WEEK',
             default => 'PLG_REQUIREMENTS_PERIOD_YEAR'
         };
+    }
+
+    /**
+     * Human-readable description of a requirement type's period, e.g. "Calendar year" or
+     * "Every 2 years after the last fulfilment".
+     *
+     * @param array<string,mixed> $type
+     */
+    private static function periodDescription(array $type, Language $gL10n): string
+    {
+        $unit = (string) $type['rqt_period_unit'];
+        $count = max(1, (int) $type['rqt_period_count']);
+
+        if ((string) $type['rqt_period_anchor'] === 'calendar') {
+            return $gL10n->get(match ($unit) {
+                'quarter' => 'PLG_REQUIREMENTS_PERIOD_CALENDAR_QUARTER',
+                'month' => 'PLG_REQUIREMENTS_PERIOD_CALENDAR_MONTH',
+                'week' => 'PLG_REQUIREMENTS_PERIOD_CALENDAR_WEEK',
+                default => 'PLG_REQUIREMENTS_PERIOD_CALENDAR_YEAR'
+            });
+        }
+
+        return $gL10n->get('PLG_REQUIREMENTS_PERIOD_RECURRING', array(
+            $count . ' ' . $gL10n->get(self::periodUnitLabel($unit))
+        ));
     }
 }

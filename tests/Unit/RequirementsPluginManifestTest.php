@@ -15,7 +15,7 @@ final class RequirementsPluginManifestTest extends AdmidioTestCase
         $this->assertSame('requirements', $plugin->id);
         $this->assertSame('0.2.0', $plugin->version);
         $this->assertSame(
-            array('activities.php', 'index.php', 'providers.php', 'rules.php'),
+            array('index.php', 'providers.php', 'rules.php'),
             $plugin->getPages()
         );
         $normalize = static fn(?string $path): ?string => $path === null ? null : str_replace('\\', '/', $path);

@@ -1,3 +1,4 @@
+{if isset($searchUrl)}{include 'requirements.search.tpl'}{/if}
 {if $types|@count eq 0}
     <div class="alert alert-info" role="alert">
         <i class="bi bi-info-circle-fill"></i> {$messageNoData}
