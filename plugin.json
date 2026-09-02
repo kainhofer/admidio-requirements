@@ -1,0 +1,61 @@
+{
+    "name": "PLG_REQUIREMENTS_NAME",
+    "description": "PLG_REQUIREMENTS_DESCRIPTION",
+    "version": "0.2.0",
+    "author": "Admidio Team",
+    "url": "https://www.admidio.org",
+    "icon": "bi-clipboard-check",
+    "requires": {
+        "admidio": ">=5.1",
+        "php": ">=8.2"
+    },
+    "autoload": {
+        "AdmidioPlugin\\Requirements\\": "src/"
+    },
+    "preferences": {
+        "section": "content_management",
+        "sequence": 40
+    },
+    "settings": {
+        "requirements_plugin_enabled": {
+            "type": "enum",
+            "default": "2",
+            "values": {
+                "0": "SYS_DISABLED",
+                "2": "ORG_REGISTERED_USERS"
+            },
+            "label": "ORG_ACCESS_TO_PLUGIN",
+            "description": "ORG_ACCESS_TO_PLUGIN_DESC"
+        },
+        "requirements_activity_owner_edit_policy": {
+            "type": "enum",
+            "default": "always",
+            "values": {
+                "always": "PLG_REQUIREMENTS_EDIT_POLICY_ALWAYS",
+                "until_submitted": "PLG_REQUIREMENTS_EDIT_POLICY_UNTIL_SUBMITTED"
+            },
+            "label": "PLG_REQUIREMENTS_EDIT_POLICY",
+            "description": "PLG_REQUIREMENTS_EDIT_POLICY_DESC"
+        },
+        "requirements_proration_basis_default": {
+            "type": "enum",
+            "default": "month",
+            "values": {
+                "month": "PLG_REQUIREMENTS_PRORATION_MONTH",
+                "day": "PLG_REQUIREMENTS_PRORATION_DAY",
+                "week": "PLG_REQUIREMENTS_PRORATION_WEEK"
+            },
+            "label": "PLG_REQUIREMENTS_PRORATION_DEFAULT",
+            "description": "PLG_REQUIREMENTS_PRORATION_DEFAULT_DESC"
+        },
+        "requirements_overview_previous_years": {
+            "type": "int",
+            "default": 4,
+            "min": 0,
+            "max": 20,
+            "step": 1,
+            "label": "PLG_REQUIREMENTS_OVERVIEW_PREVIOUS_YEARS",
+            "description": "PLG_REQUIREMENTS_OVERVIEW_PREVIOUS_YEARS_DESC"
+        }
+    }
+}

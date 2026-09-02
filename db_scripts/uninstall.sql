@@ -1,0 +1,5 @@
+DROP TABLE IF EXISTS %PREFIX%_req_activity_credits CASCADE;
+DROP TABLE IF EXISTS %PREFIX%_req_requirement_role_rules CASCADE;
+DROP TABLE IF EXISTS %PREFIX%_req_activities CASCADE;
+DROP TABLE IF EXISTS %PREFIX%_req_requirement_types CASCADE;
+DROP TABLE IF EXISTS %PREFIX%_req_providers CASCADE;
