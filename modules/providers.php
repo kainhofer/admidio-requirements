@@ -55,7 +55,11 @@ try {
         case 'save':
             $provider = new Provider($gDb);
             if ($getUuid !== '') {
+                // See index.php: a stale UUID must not turn an edit into a create.
                 $provider->readDataByUuid($getUuid);
+                if ((int) $provider->getValue('rqp_id') === 0) {
+                    throw new Exception('SYS_INVALID_PAGE_VIEW');
+                }
             }
 
             $form = $gCurrentSession->getFormObject($_POST['adm_csrf_token']);

@@ -42,6 +42,10 @@ class RulePresenter extends RequirementsPresenter
             $this->pageUrl('rules.php', array('mode' => 'type-edit')),
             'bi-plus-circle-fill'
         );
+        $this->addHistoryMenuItem(
+            'rules',
+            array('req_requirement_types', 'req_requirement_role_rules')
+        );
 
         $this->assignSmartyVariable('searchUrl', $this->plugin->getUrl('rules.php'));
         $this->assignSmartyVariable('query', $query);

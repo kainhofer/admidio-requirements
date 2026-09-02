@@ -43,9 +43,9 @@ CliTaskRegistry::register(
     RequirementsPlugin::ID,
     array(RequirementsCli::class, 'providerList'),
     'List providers visible to the acting user.',
-    'requirements:provider-list [--format=FORMAT]',
+    'requirements:provider-list [--query=TEXT] [--format=FORMAT]',
     array(),
-    array($format),
+    array($opt('query', 'Free-text filter on name and short name.', 'TEXT'), $format),
     array(),
     CliTaskRegistry::ACCESS_VISIBLE
 );
@@ -81,6 +81,19 @@ CliTaskRegistry::register(
     'requirements:provider-update PROVIDER [options] [--dry-run]',
     array($arg('provider', 'Provider UUID or id.')),
     $providerOptions,
+    array(),
+    CliTaskRegistry::ACCESS_ADMINISTRABLE,
+    true
+);
+
+CliTaskRegistry::register(
+    'requirements:provider-delete',
+    RequirementsPlugin::ID,
+    array(RequirementsCli::class, 'providerDelete'),
+    'Delete a provider. Activities keep the stored provider name.',
+    'requirements:provider-delete PROVIDER --yes [--dry-run]',
+    array($arg('provider', 'Provider UUID or id.')),
+    array($format),
     array(),
     CliTaskRegistry::ACCESS_ADMINISTRABLE,
     true
@@ -136,6 +149,31 @@ CliTaskRegistry::register(
     true
 );
 
+CliTaskRegistry::register(
+    'requirements:requirement-delete',
+    RequirementsPlugin::ID,
+    array(RequirementsCli::class, 'requirementDelete'),
+    'Delete a requirement type. Its role rules go with it; existing credits block the deletion.',
+    'requirements:requirement-delete REQUIREMENT --yes [--dry-run]',
+    array($arg('requirement', 'Requirement UUID, id or short name.')),
+    array($format),
+    array(),
+    CliTaskRegistry::ACCESS_ADMINISTRABLE,
+    true
+);
+
+CliTaskRegistry::register(
+    'requirements:rule-list',
+    RequirementsPlugin::ID,
+    array(RequirementsCli::class, 'ruleList'),
+    'List role rules with their required credits and validity.',
+    'requirements:rule-list [--requirement=REQUIREMENT] [--format=FORMAT]',
+    array(),
+    array($opt('requirement', 'Restrict to one requirement type.', 'REQUIREMENT'), $format),
+    array(),
+    CliTaskRegistry::ACCESS_VISIBLE
+);
+
 $ruleOptions = array(
     $opt('role', 'Role id.', 'ID'),
     $opt('credits', 'Required credits.', 'N'),
@@ -174,6 +212,36 @@ CliTaskRegistry::register(
     array(),
     CliTaskRegistry::ACCESS_ADMINISTRABLE,
     true
+);
+
+CliTaskRegistry::register(
+    'requirements:rule-delete',
+    RequirementsPlugin::ID,
+    array(RequirementsCli::class, 'ruleDelete'),
+    'Delete a role rule.',
+    'requirements:rule-delete RULE --yes [--dry-run]',
+    array($arg('rule', 'Rule UUID or id.')),
+    array($format),
+    array(),
+    CliTaskRegistry::ACCESS_ADMINISTRABLE,
+    true
+);
+
+CliTaskRegistry::register(
+    'requirements:activity-list',
+    RequirementsPlugin::ID,
+    array(RequirementsCli::class, 'activityList'),
+    'List activities. A normal member sees only their own.',
+    'requirements:activity-list [--user=USER] [--query=TEXT] [--requirement=REQUIREMENT] [--format=FORMAT]',
+    array(),
+    array(
+        $opt('user', 'Restrict to one member. Non-administrators may only select themselves.', 'USER'),
+        $opt('query', 'Free-text filter on title and provider name.', 'TEXT'),
+        $opt('requirement', 'Show the credited period and credits for this requirement.', 'REQUIREMENT'),
+        $format
+    ),
+    array(),
+    CliTaskRegistry::ACCESS_VISIBLE
 );
 
 $activityOptions = array(
@@ -221,6 +289,18 @@ CliTaskRegistry::register(
     true
 );
 CliTaskRegistry::register(
+    'requirements:activity-submit',
+    RequirementsPlugin::ID,
+    array(RequirementsCli::class, 'activitySubmit'),
+    'Hand a draft activity over for review.',
+    'requirements:activity-submit ACTIVITY [--dry-run]',
+    array($arg('activity', 'Activity UUID or id.')),
+    array($format),
+    array(),
+    CliTaskRegistry::ACCESS_VISIBLE,
+    true
+);
+CliTaskRegistry::register(
     'requirements:activity-delete',
     RequirementsPlugin::ID,
     array(RequirementsCli::class, 'activityDelete'),
@@ -245,6 +325,23 @@ CliTaskRegistry::register(
         $arg('claimed', 'Claimed credits.')
     ),
     array($opt('accepted', 'Accepted credits; zero explicitly rejects the claim.', 'N'), $format),
+    array(),
+    CliTaskRegistry::ACCESS_ADMINISTRABLE,
+    true
+);
+
+CliTaskRegistry::register(
+    'requirements:credit-delete',
+    RequirementsPlugin::ID,
+    array(RequirementsCli::class, 'creditDelete'),
+    'Remove one credited-period contribution from an activity.',
+    'requirements:credit-delete ACTIVITY REQUIREMENT PERIOD --yes [--dry-run]',
+    array(
+        $arg('activity', 'Activity UUID or id.'),
+        $arg('requirement', 'Requirement UUID, id or short name.'),
+        $arg('period', 'Credited period or fulfilment date.')
+    ),
+    array($format),
     array(),
     CliTaskRegistry::ACCESS_ADMINISTRABLE,
     true

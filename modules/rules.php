@@ -66,7 +66,11 @@ try {
         case 'type-save':
             $type = new RequirementType($gDb);
             if ($getUuid !== '') {
+                // See index.php: a stale UUID must not turn an edit into a create.
                 $type->readDataByUuid($getUuid);
+                if ((int) $type->getValue('rqt_id') === 0) {
+                    throw new Exception('SYS_INVALID_PAGE_VIEW');
+                }
             }
             $formValues = $gCurrentSession->getFormObject($_POST['adm_csrf_token'])->validate($_POST);
             $values = array();
@@ -90,7 +94,11 @@ try {
 
             $rule = new RequirementRoleRule($gDb);
             if ($getUuid !== '') {
+                // See index.php: a stale UUID must not turn an edit into a create.
                 $rule->readDataByUuid($getUuid);
+                if ((int) $rule->getValue('rrr_id') === 0) {
+                    throw new Exception('SYS_INVALID_PAGE_VIEW');
+                }
                 $type->readDataById((int) $rule->getValue('rrr_requirement_type_id'));
             }
             if ((int) $type->getValue('rqt_id') === 0) {

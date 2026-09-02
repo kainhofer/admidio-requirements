@@ -14,10 +14,13 @@ final class RequirementsPluginManifestTest extends AdmidioTestCase
         $this->assertTrue($plugin->isValid(), (string)$plugin->error);
         $this->assertSame('requirements', $plugin->id);
         $this->assertSame('0.2.0', $plugin->version);
-        $this->assertSame(
-            array('index.php', 'providers.php', 'rules.php'),
-            $plugin->getPages()
-        );
+        // Membership, not equality: a page added later is not a regression, and index.php being
+        // the landing page is (REQ-DEC-015).
+        $pages = $plugin->getPages();
+        $this->assertSame('index.php', $pages[0] ?? null, 'index.php is the plugin main page.');
+        foreach (array('index.php', 'providers.php', 'rules.php') as $page) {
+            $this->assertContains($page, $pages);
+        }
         $normalize = static fn(?string $path): ?string => $path === null ? null : str_replace('\\', '/', $path);
         $this->assertSame(
             $normalize(realpath($pluginPath . '/src')),

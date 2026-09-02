@@ -41,7 +41,7 @@ CREATE TABLE %PREFIX%_req_activities (
     rqa_certificate_date    date             NULL,
     rqa_attendance          decimal(10,2)    NULL DEFAULT 0.00,
     rqa_comments            text             NULL,
-    rqa_status              varchar(32)      NOT NULL DEFAULT 'submitted',
+    rqa_status              varchar(32)      NOT NULL DEFAULT 'draft',
     rqa_review_comments     text             NULL,
     rqa_review_status       varchar(32)      NULL,
     rqa_usr_id_create       integer unsigned,

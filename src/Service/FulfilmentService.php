@@ -22,10 +22,9 @@ final class FulfilmentService
      */
     public function coverageForUser(int $userId, string $referenceDate): array
     {
-        global $gCurrentOrgId, $gCurrentUser, $gValidLogin;
+        global $gCurrentOrgId, $gCurrentUser, $gValidLogin, $gL10n;
 
-        if (!$gValidLogin
-            || !Component::isVisible(RequirementsPlugin::ID)
+        if (!RequirementsPlugin::isUsableByCurrentUser()
             || (
                 $userId !== (int)$gCurrentUser->getValue('usr_id')
                 && !Component::isAdministrable(RequirementsPlugin::ID)
@@ -54,17 +53,10 @@ final class FulfilmentService
             $type->setArray($row);
 
             if ((string)$type->getValue('rqt_period_anchor') !== 'calendar') {
-                $result[] = array(
-                    'requirement' => (string)$type->getValue('rqt_name'),
-                    'shortName' => (string)$type->getValue('rqt_short_name'),
-                    'period' => null,
-                    'attained' => null,
-                    'required' => null,
-                    'coverage' => null,
-                    'status' => 'recurring-not-calculated',
-                    'warnings' => array('last_fulfilment calculation is not implemented in this increment.'),
-                    'activities' => array()
-                );
+                $recurring = $this->lastFulfilmentCoverage($type, $userId, $reference);
+                if ($recurring !== null) {
+                    $result[] = $recurring;
+                }
                 continue;
             }
 
@@ -76,7 +68,7 @@ final class FulfilmentService
             )));
             $memberships = $this->loadMemberships($userId, $roleIds, $periodStart, $periodEnd);
 
-            [$required, $warnings] = $this->calculateRequired(
+            [$required, $warnings, $hasRule] = $this->calculateRequired(
                 $type,
                 $rules,
                 $memberships,
@@ -89,8 +81,8 @@ final class FulfilmentService
                 (int)$type->getValue('rqt_id'),
                 $periodStart->format('Y-m-d')
             );
-            $attained = array_sum(array_column($credits, 'effectiveCredits'));
-            if ($required <= 0.0 && $credits === array()) {
+            [$attained, $pending] = self::sumCredits($credits);
+            if ($required <= 0.0 && $credits === array() && !$hasRule) {
                 continue;
             }
 
@@ -103,15 +95,198 @@ final class FulfilmentService
                 'period' => $label,
                 'periodReference' => $periodStart->format('Y-m-d'),
                 'attained' => round($attained, 2),
+                'pending' => round($pending, 2),
                 'required' => $required > 0.0 ? round($required, 2) : null,
                 'coverage' => $coverage === null ? null : round($coverage, 1),
-                'status' => $required <= 0.0 ? 'additional-credits' : ($attained >= $required ? 'fulfilled' : 'missing'),
+                'status' => self::coverageStatus($required, $attained, $hasRule),
                 'warnings' => $warnings,
                 'activities' => $credits
             );
         }
 
         return $result;
+    }
+
+    /**
+     * Coverage of a requirement that recurs from its last fulfilment (§8.3, REQ-DEC-005).
+     *
+     * There is no calendar period here, so nothing can be pro-rated and nothing is bounded by a
+     * year: the cycles are found by walking the contributions in the order of their credited period
+     * and accumulating them until the target is reached. The date of the contribution that reaches
+     * it is the renewal date, accumulation restarts from zero, and the next due date is that renewal
+     * plus the configured interval.
+     *
+     * Excess credit does not carry into the new cycle, which is the point of the rule: a member who
+     * collects 30 hours against a 15-hour requirement has renewed once, not twice.
+     *
+     * A target of zero has no threshold to cross, which is the binary case the concept settles
+     * separately: any positive effective credit renews it.
+     *
+     * @return array<string,mixed>|null null when the requirement does not apply to this member and
+     *         carries no credits of theirs either
+     * @throws Exception
+     */
+    private function lastFulfilmentCoverage(
+        RequirementType $type,
+        int $userId,
+        DateTimeImmutable $reference
+    ): ?array {
+        $typeId = (int) $type->getValue('rqt_id');
+        [$target, $warnings, $hasRule] = $this->recurringTarget($type, $userId, $reference);
+        $credits = $this->loadAllCredits($userId, $typeId);
+
+        if (!$hasRule && $credits === array()) {
+            return null;
+        }
+
+        $counting = array_values(array_filter($credits, static fn(array $c): bool => $c['counts']));
+        $pending = array_sum(array_column(
+            array_filter($credits, static fn(array $c): bool => !$c['counts']),
+            'effectiveCredits'
+        ));
+
+        [$renewals, $running] = self::renewalCycles($counting, $target);
+        $lastRenewal = $renewals === array() ? null : end($renewals);
+
+        $nextDue = $lastRenewal === null
+            ? null
+            : self::date($lastRenewal)->add(self::renewalInterval($type))->format('Y-m-d');
+
+        if ($lastRenewal === null) {
+            $status = $hasRule ? 'never-fulfilled' : 'additional-credits';
+        } elseif ($nextDue !== null && $nextDue <= $reference->format('Y-m-d')) {
+            $status = 'overdue';
+        } else {
+            $status = 'fulfilled';
+        }
+
+        return array(
+            'typeId' => $typeId,
+            'requirement' => (string) $type->getValue('rqt_name'),
+            'shortName' => (string) $type->getValue('rqt_short_name'),
+            'period' => self::renewalLabel($type),
+            'periodReference' => $lastRenewal,
+            'attained' => round($running, 2),
+            'pending' => round((float) $pending, 2),
+            'required' => $target > 0.0 ? round($target, 2) : null,
+            'coverage' => $target > 0.0 ? round(min(100.0, ($running / $target) * 100.0), 1) : null,
+            'status' => $status,
+            'lastFulfilment' => $lastRenewal,
+            'nextDue' => $nextDue,
+            'warnings' => $warnings,
+            'activities' => $credits
+        );
+    }
+
+    /**
+     * Walk the contributions of a recurring requirement and find the dates it was renewed on.
+     *
+     * This is the threshold-crossing rule of §8.3 (REQ-DEC-005) on its own: accumulate the effective
+     * credits in the order of their credited period, and every time the running total reaches the
+     * target, that contribution's date is a renewal and the total starts again from zero. Excess is
+     * deliberately dropped rather than carried, so 30 hours against a 15-hour requirement renew it
+     * once, not twice.
+     *
+     * A target of zero or less has no threshold to cross. That is the binary case - a certificate
+     * either exists or it does not - and any positive contribution renews it.
+     *
+     * @param array<int,array<string,mixed>> $credits contributions that count, ordered by their
+     *        credited-period date, each with `periodReference` and `effectiveCredits`
+     * @return array{0:array<int,string>,1:float} the renewal dates in order, and how much has been
+     *         accumulated towards the next one
+     */
+    public static function renewalCycles(array $credits, float $target): array
+    {
+        $renewals = array();
+        $running = 0.0;
+
+        foreach ($credits as $credit) {
+            $effective = (float) $credit['effectiveCredits'];
+
+            if ($target <= 0.0) {
+                if ($effective > 0.0) {
+                    $renewals[] = (string) $credit['periodReference'];
+                }
+                continue;
+            }
+
+            $running += $effective;
+            if ($running >= $target) {
+                $renewals[] = (string) $credit['periodReference'];
+                $running = 0.0;
+            }
+        }
+
+        return array($renewals, $running);
+    }
+
+    /**
+     * The credit target of a recurring requirement: the rules valid at the reference date, for the
+     * roles the member holds then, combined by the requirement's multiple-roles mode.
+     *
+     * Nothing is pro-rated. Proration answers "how much of this period were you a member for", and a
+     * recurring requirement has no period - the obligation is simply what the rule says.
+     *
+     * @return array{0:float,1:array<int,string>,2:bool}
+     * @throws Exception
+     */
+    private function recurringTarget(RequirementType $type, int $userId, DateTimeImmutable $reference): array
+    {
+        $rules = $this->loadRules($type, $reference, $reference);
+        $roleIds = array_values(array_unique(array_map(
+            static fn(array $rule): int => (int) $rule['rrr_role_id'],
+            $rules
+        )));
+        $memberships = $this->loadMemberships($userId, $roleIds, $reference, $reference);
+
+        // `full` for every row: see above.
+        foreach ($rules as $index => $rule) {
+            $rules[$index]['rrr_partial_period_mode'] = 'full';
+        }
+
+        return self::calculateRequiredCredits(
+            (string) $type->getValue('rqt_multiple_roles_mode'),
+            $rules,
+            $memberships,
+            $reference,
+            $reference
+        );
+    }
+
+    /**
+     * The gap between one fulfilment and the next, from the unit and count of the requirement.
+     *
+     * Unlike a calendar period a count above one is well defined here: the cycle is measured from
+     * the renewal date, so "every two years" needs no alignment anchor (§8.4).
+     *
+     * @throws Exception
+     */
+    private static function renewalInterval(RequirementType $type): DateInterval
+    {
+        $count = max(1, (int) $type->getValue('rqt_period_count'));
+
+        return new DateInterval(match ((string) $type->getValue('rqt_period_unit')) {
+            'year' => 'P' . $count . 'Y',
+            'quarter' => 'P' . ($count * 3) . 'M',
+            'month' => 'P' . $count . 'M',
+            'week' => 'P' . ($count * 7) . 'D',
+            default => throw new Exception('SYS_INVALID_PAGE_VIEW')
+        });
+    }
+
+    private static function renewalLabel(RequirementType $type): string
+    {
+        global $gL10n;
+
+        $count = max(1, (int) $type->getValue('rqt_period_count'));
+        $unit = $gL10n->get(match ((string) $type->getValue('rqt_period_unit')) {
+            'quarter' => 'PLG_REQUIREMENTS_PERIOD_QUARTER',
+            'month' => 'PLG_REQUIREMENTS_PERIOD_MONTH',
+            'week' => 'PLG_REQUIREMENTS_PERIOD_WEEK',
+            default => 'PLG_REQUIREMENTS_PERIOD_YEAR'
+        });
+
+        return $gL10n->get('PLG_REQUIREMENTS_PERIOD_RECURRING', array($count . ' ' . $unit));
     }
 
     /**
@@ -128,8 +303,7 @@ final class FulfilmentService
     {
         global $gCurrentOrgId, $gCurrentUser, $gValidLogin;
 
-        if (!$gValidLogin
-            || !Component::isVisible(RequirementsPlugin::ID)
+        if (!RequirementsPlugin::isUsableByCurrentUser()
             || (
                 $userId !== (int) $gCurrentUser->getValue('usr_id')
                 && !Component::isAdministrable(RequirementsPlugin::ID)
@@ -145,9 +319,9 @@ final class FulfilmentService
 
         $rows = $this->db->getArrayFromSql(
             'SELECT * FROM ' . RequirementsTables::requirementTypes() . '
-              WHERE rqt_org_id = ? AND rqt_period_anchor = ?
+              WHERE rqt_org_id = ?
               ORDER BY rqt_sequence, rqt_name',
-            array((int) $gCurrentOrgId, 'calendar')
+            array((int) $gCurrentOrgId)
         );
 
         $today = self::date(DATE_NOW);
@@ -158,7 +332,35 @@ final class FulfilmentService
             $type->setArray($row);
             $typeId = (int) $type->getValue('rqt_id');
 
-            if (!in_array($typeId, $applicable, true) || (int) $type->getValue('rqt_period_count') !== 1) {
+            if (!in_array($typeId, $applicable, true)) {
+                continue;
+            }
+
+            // A requirement that recurs from its last fulfilment has no periods to lay side by
+            // side. It gets one bar: how far the running cycle has come, labelled with its due date.
+            if ((string) $type->getValue('rqt_period_anchor') !== 'calendar') {
+                $recurring = $this->lastFulfilmentCoverage($type, $userId, $today);
+                if ($recurring !== null) {
+                    $result[] = array(
+                        'typeId' => $typeId,
+                        'requirement' => $recurring['requirement'],
+                        'shortName' => $recurring['shortName'],
+                        'periods' => array(array(
+                            'label' => $recurring['nextDue'] ?? $recurring['period'],
+                            'periodReference' => $recurring['periodReference'],
+                            'attained' => $recurring['attained'],
+                            'pending' => $recurring['pending'],
+                            'required' => $recurring['required'],
+                            'percent' => $recurring['coverage'] === null ? null : (int) round($recurring['coverage']),
+                            'status' => $recurring['status'],
+                            'warnings' => $recurring['warnings']
+                        ))
+                    );
+                }
+                continue;
+            }
+
+            if ((int) $type->getValue('rqt_period_count') !== 1) {
                 continue;
             }
 
@@ -207,26 +409,46 @@ final class FulfilmentService
         )));
         $memberships = $this->loadMemberships($userId, $roleIds, $periodStart, $periodEnd);
 
-        [$required, $warnings] = $this->calculateRequired($type, $rules, $memberships, $periodStart, $periodEnd);
+        [$required, $warnings, $hasRule] = $this->calculateRequired(
+            $type,
+            $rules,
+            $memberships,
+            $periodStart,
+            $periodEnd
+        );
 
         $credits = $this->loadCredits($userId, (int) $type->getValue('rqt_id'), $periodStart->format('Y-m-d'));
-        $attained = (float) array_sum(array_column($credits, 'effectiveCredits'));
-
-        if ($required > 0.0) {
-            $status = $attained >= $required ? 'fulfilled' : 'missing';
-        } else {
-            $status = $attained > 0.0 ? 'additional-credits' : 'none';
-        }
+        [$attained, $pending] = self::sumCredits($credits);
 
         return array(
             'label' => $label,
             'periodReference' => $periodStart->format('Y-m-d'),
             'attained' => round($attained, 2),
+            'pending' => round($pending, 2),
             'required' => $required > 0.0 ? round($required, 2) : null,
             'percent' => $required > 0.0 ? (int) round(min(100.0, ($attained / $required) * 100.0)) : null,
-            'status' => $status,
+            'status' => self::coverageStatus($required, $attained, $hasRule),
             'warnings' => $warnings
         );
+    }
+
+    /**
+     * How a period reads once required and attained are known.
+     *
+     * `fulfilled` / `missing` need a positive target. A target of exactly zero is a real
+     * configuration - a rule that says "be enrolled, collect nothing" - so it gets its own
+     * `no-credits-required` answer instead of being reported as if no rule applied at all (finding
+     * 3.5). Without any applicable rule, credits are `additional-credits` and nothing is `none`.
+     */
+    private static function coverageStatus(float $required, float $attained, bool $hasRule): string
+    {
+        if ($required > 0.0) {
+            return $attained >= $required ? 'fulfilled' : 'missing';
+        }
+        if ($hasRule) {
+            return 'no-credits-required';
+        }
+        return $attained > 0.0 ? 'additional-credits' : 'none';
     }
 
     /**
@@ -263,10 +485,23 @@ final class FulfilmentService
      */
     public static function periodControlKind(RequirementType $type): string
     {
-        if ((string) $type->getValue('rqt_period_anchor') !== 'calendar') {
+        return self::periodControlKindFor(
+            (string) $type->getValue('rqt_period_anchor'),
+            (string) $type->getValue('rqt_period_unit')
+        );
+    }
+
+    /**
+     * The same answer from the two stored values, without a requirement-type record. Reading a
+     * column out of an Entity means a database, and the control kind is a pure decision - so the
+     * decision lives here and the entity-facing method above only unpacks the record.
+     */
+    public static function periodControlKindFor(string $anchor, string $unit): string
+    {
+        if ($anchor !== 'calendar') {
             return 'date';
         }
-        return match ((string) $type->getValue('rqt_period_unit')) {
+        return match ($unit) {
             'year' => 'year',
             'quarter' => 'quarter',
             'month' => 'month',
@@ -319,9 +554,16 @@ final class FulfilmentService
      */
     public static function periodInputToDate(RequirementType $type, string $raw, string $quarter = ''): string
     {
+        return self::periodInputToDateForKind(self::periodControlKind($type), $raw, $quarter);
+    }
+
+    /**
+     * @throws Exception SYS_DATE_INVALID
+     */
+    public static function periodInputToDateForKind(string $kind, string $raw, string $quarter = ''): string
+    {
         $raw = trim($raw);
         $maxYear = (int) date('Y') + 1;
-        $kind = self::periodControlKind($type);
 
         switch ($kind) {
             case 'year':
@@ -384,12 +626,25 @@ final class FulfilmentService
      */
     public static function periodFor(RequirementType $type, DateTimeImmutable $reference): array
     {
-        $count = (int)$type->getValue('rqt_period_count');
+        return self::periodForUnit(
+            (string)$type->getValue('rqt_period_unit'),
+            (int)$type->getValue('rqt_period_count'),
+            $reference
+        );
+    }
+
+    /**
+     * The period that contains $reference, from the two stored values rather than from a record.
+     *
+     * @return array{0:DateTimeImmutable,1:DateTimeImmutable,2:string} start, end (inclusive), label
+     * @throws Exception PLG_REQUIREMENTS_CALENDAR_MULTI_PERIOD_UNSUPPORTED for a count above one
+     */
+    public static function periodForUnit(string $unit, int $count, DateTimeImmutable $reference): array
+    {
         if ($count !== 1) {
             throw new Exception('PLG_REQUIREMENTS_CALENDAR_MULTI_PERIOD_UNSUPPORTED');
         }
 
-        $unit = (string)$type->getValue('rqt_period_unit');
         switch ($unit) {
             case 'year':
                 $start = $reference->setDate((int)$reference->format('Y'), 1, 1);
@@ -437,7 +692,7 @@ final class FulfilmentService
         global $gCurrentOrgId;
 
         $statement = $this->db->queryPrepared(
-            'SELECT rrr.*
+            'SELECT rrr.*, rol.rol_name
                FROM ' . RequirementsTables::requirementRoleRules() . ' AS rrr
          INNER JOIN ' . TBL_ROLES . ' AS rol
                  ON rol.rol_id = rrr.rrr_role_id
@@ -502,7 +757,9 @@ final class FulfilmentService
     /**
      * @param array<int,array<string,mixed>> $rules
      * @param array<int,array<int,array{start:string,end:string}>> $memberships
-     * @return array{0:float,1:array<int,string>}
+     * @return array{0:float,1:array<int,string>,2:bool} required credits, configuration warnings,
+     *         and whether any role rule applied to this user in this period at all - which a
+     *         required amount of zero cannot distinguish on its own
      */
     private function calculateRequired(
         RequirementType $type,
@@ -511,6 +768,40 @@ final class FulfilmentService
         DateTimeImmutable $periodStart,
         DateTimeImmutable $periodEnd
     ): array {
+        return self::calculateRequiredCredits(
+            (string)$type->getValue('rqt_multiple_roles_mode'),
+            $rules,
+            $memberships,
+            $periodStart,
+            $periodEnd
+        );
+    }
+
+    /**
+     * The obligation of one member for one requirement period.
+     *
+     * Takes the multiple-roles mode rather than the requirement type, so that the whole calculation
+     * is a function of plain rows and dates: the rules as they come out of the database, and the
+     * membership intervals as they come out of TBL_MEMBERS. Nothing here needs a record, which is
+     * what makes the policy of §6.2, §6.3 and §6.4 testable without a database.
+     *
+     * @param array<int,array<string,mixed>> $rules rows of req_requirement_role_rules, each with
+     *        rrr_role_id, rrr_required_credits, rrr_partial_period_mode, rrr_proration_basis,
+     *        rrr_membership_at_period_start, rrr_valid_from, rrr_valid_until and optionally rol_name
+     * @param array<int,array<int,array{start:string,end:string}>> $memberships by role id
+     * @return array{0:float,1:array<int,string>,2:bool} required credits, configuration warnings,
+     *         and whether any role rule applied to this user in this period at all - which a
+     *         required amount of zero cannot distinguish on its own
+     */
+    public static function calculateRequiredCredits(
+        string $multipleRolesMode,
+        array $rules,
+        array $memberships,
+        DateTimeImmutable $periodStart,
+        DateTimeImmutable $periodEnd
+    ): array {
+        global $gL10n;
+
         $byRole = array();
         foreach ($rules as $rule) {
             $byRole[(int)$rule['rrr_role_id']][] = $rule;
@@ -527,20 +818,22 @@ final class FulfilmentService
 
             $fullValues = array();
             $proRata = 0.0;
+            $applied = false;
             foreach ($roleRules as $rule) {
                 if ((bool)$rule['rrr_membership_at_period_start']
-                    && !$this->dateInMemberships($periodStart, $roleMemberships)) {
+                    && !self::dateInMemberships($periodStart, $roleMemberships)) {
                     continue;
                 }
 
-                if (!$this->hasQualifyingOverlap($rule, $roleMemberships, $periodStart, $periodEnd)) {
+                if (!self::hasQualifyingOverlap($rule, $roleMemberships, $periodStart, $periodEnd)) {
                     continue;
                 }
 
+                $applied = true;
                 if ((string)$rule['rrr_partial_period_mode'] === 'full') {
                     $fullValues[] = (float)$rule['rrr_required_credits'];
                 } else {
-                    $fraction = $this->prorationFraction(
+                    $fraction = self::prorationFraction(
                         $roleMemberships,
                         $periodStart,
                         $periodEnd,
@@ -552,11 +845,19 @@ final class FulfilmentService
                 }
             }
 
+            // Holding the role is not enough: if every rule of it was gated out or lies outside the
+            // period, the role takes no part in the combination below. Contributing a zero would
+            // make `minimum` collapse to nothing and would report "a rule applied" when none did.
+            if (!$applied) {
+                continue;
+            }
+
+            $roleName = (string)($roleRules[0]['rol_name'] ?? $roleId);
             if (count($fullValues) > 1) {
-                $warnings[] = 'Role ' . $roleId . ' has several full rules in this period; highest value used.';
+                $warnings[] = $gL10n->get('PLG_REQUIREMENTS_WARNING_SEVERAL_FULL_RULES', array($roleName));
             }
             if ($fullValues !== array() && $proRata > 0.0) {
-                $warnings[] = 'Role ' . $roleId . ' mixes full and pro-rata rules in this period; highest resulting obligation used.';
+                $warnings[] = $gL10n->get('PLG_REQUIREMENTS_WARNING_MIXED_RULES', array($roleName));
             }
 
             $full = $fullValues === array() ? 0.0 : max($fullValues);
@@ -564,23 +865,22 @@ final class FulfilmentService
         }
 
         if ($roleAmounts === array()) {
-            return array(0.0, $warnings);
+            return array(0.0, $warnings, false);
         }
 
-        $mode = (string)$type->getValue('rqt_multiple_roles_mode');
-        $required = match ($mode) {
+        $required = match ($multipleRolesMode) {
             'sum' => array_sum($roleAmounts),
             'minimum' => min($roleAmounts),
             default => max($roleAmounts)
         };
 
-        return array($required, $warnings);
+        return array($required, $warnings, true);
     }
 
     /**
      * @param array<int,array{start:string,end:string}> $memberships
      */
-    private function prorationFraction(
+    public static function prorationFraction(
         array $memberships,
         DateTimeImmutable $periodStart,
         DateTimeImmutable $periodEnd,
@@ -601,7 +901,7 @@ final class FulfilmentService
             if ($validUntil !== null && $unitStart->format('Y-m-d') > $validUntil) {
                 continue;
             }
-            if ($this->dateInMemberships($unitStart, $memberships)) {
+            if (self::dateInMemberships($unitStart, $memberships)) {
                 ++$qualifying;
             }
         }
@@ -645,7 +945,7 @@ final class FulfilmentService
      * @param array<string,mixed> $rule
      * @param array<int,array{start:string,end:string}> $memberships
      */
-    private function hasQualifyingOverlap(
+    private static function hasQualifyingOverlap(
         array $rule,
         array $memberships,
         DateTimeImmutable $periodStart,
@@ -684,7 +984,7 @@ final class FulfilmentService
     /**
      * @param array<int,array{start:string,end:string}> $memberships
      */
-    private function dateInMemberships(DateTimeImmutable $date, array $memberships): bool
+    public static function dateInMemberships(DateTimeImmutable $date, array $memberships): bool
     {
         $value = $date->format('Y-m-d');
         foreach ($memberships as $membership) {
@@ -696,25 +996,65 @@ final class FulfilmentService
     }
 
     /**
+     * Activity statuses whose credits are never counted towards a requirement.
+     *
+     * `withdrawn` speaks for itself. `draft` is REQ-DEC-022: a draft only exists under the
+     * `until_submitted` policy, which an organization chooses precisely because submitting should
+     * mean something - so a member must not be able to watch their own coverage turn green without
+     * ever handing the activity over. Draft credits are reported separately as "pending" rather than
+     * silently disappearing.
+     */
+    private const NON_COUNTING_STATUSES = array('withdrawn', 'draft');
+
+    /**
      * @return array<int,array<string,mixed>>
      */
     private function loadCredits(int $userId, int $requirementTypeId, string $periodReference): array
     {
+        return $this->readCredits($userId, $requirementTypeId, $periodReference);
+    }
+
+    /**
+     * Every contribution to one requirement, in the order of their credited period.
+     *
+     * A recurring requirement has no period to filter by - its cycles are found by walking the
+     * contributions in order - so this is the same query without the period condition.
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    private function loadAllCredits(int $userId, int $requirementTypeId): array
+    {
+        return $this->readCredits($userId, $requirementTypeId, null);
+    }
+
+    /**
+     * @return array<int,array<string,mixed>>
+     */
+    private function readCredits(int $userId, int $requirementTypeId, ?string $periodReference): array
+    {
         global $gCurrentOrgId;
 
+        $params = array((int)$gCurrentOrgId, $userId, $requirementTypeId, 'withdrawn');
+        $periodCondition = '';
+        if ($periodReference !== null) {
+            $periodCondition = ' AND rac.rac_period_reference = ?';
+            $params[] = $periodReference;
+        }
+
         $statement = $this->db->queryPrepared(
-            'SELECT rqa.rqa_uuid, rqa.rqa_title, rqa.rqa_begin_date,
-                    rac.rac_uuid, rac.rac_credits_claimed, rac.rac_credits_accepted
+            'SELECT rqa.rqa_uuid, rqa.rqa_title, rqa.rqa_begin_date, rqa.rqa_status,
+                    rac.rac_uuid, rac.rac_period_reference,
+                    rac.rac_credits_claimed, rac.rac_credits_accepted
                FROM ' . RequirementsTables::activityCredits() . ' AS rac
          INNER JOIN ' . RequirementsTables::activities() . ' AS rqa
                  ON rqa.rqa_id = rac.rac_activity_id
               WHERE rqa.rqa_org_id = ?
                 AND rqa.rqa_user_id = ?
                 AND rac.rac_requirement_type_id = ?
-                AND rac.rac_period_reference = ?
-                AND rqa.rqa_status <> ?
-              ORDER BY rqa.rqa_begin_date, rqa.rqa_title',
-            array((int)$gCurrentOrgId, $userId, $requirementTypeId, $periodReference, 'withdrawn')
+                AND rqa.rqa_status <> ?'
+            . $periodCondition . '
+              ORDER BY rac.rac_period_reference, rqa.rqa_begin_date, rqa.rqa_title',
+            $params
         );
 
         $credits = array();
@@ -726,12 +1066,35 @@ final class FulfilmentService
                 'creditUuid' => (string)$row['rac_uuid'],
                 'title' => (string)$row['rqa_title'],
                 'date' => (string)$row['rqa_begin_date'],
+                'periodReference' => (string)$row['rac_period_reference'],
+                'status' => (string)$row['rqa_status'],
+                'counts' => !in_array((string)$row['rqa_status'], self::NON_COUNTING_STATUSES, true),
                 'claimedCredits' => (float)$row['rac_credits_claimed'],
                 'acceptedCredits' => $row['rac_credits_accepted'] === null ? null : (float)$row['rac_credits_accepted'],
                 'effectiveCredits' => $effective
             );
         }
         return $credits;
+    }
+
+    /**
+     * Effective credits of the contributions that count, and of those still waiting to be submitted.
+     *
+     * @param array<int,array<string,mixed>> $credits
+     * @return array{0:float,1:float} attained, pending
+     */
+    private static function sumCredits(array $credits): array
+    {
+        $attained = 0.0;
+        $pending = 0.0;
+        foreach ($credits as $credit) {
+            if ($credit['counts']) {
+                $attained += (float) $credit['effectiveCredits'];
+            } else {
+                $pending += (float) $credit['effectiveCredits'];
+            }
+        }
+        return array($attained, $pending);
     }
 
     private static function date(string $value): DateTimeImmutable

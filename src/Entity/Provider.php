@@ -1,19 +1,24 @@
 <?php
 namespace AdmidioPlugin\Requirements\Entity;
 
+use Admidio\Components\Entity\Component;
 use Admidio\Infrastructure\Database;
 use Admidio\Infrastructure\Entity\Entity;
-use Admidio\Infrastructure\Exception;
 use AdmidioPlugin\Requirements\Database\RequirementsTables;
-
-use Admidio\Components\Entity\Component;
 use AdmidioPlugin\Requirements\RequirementsPlugin;
 
 final class Provider extends Entity
 {
+    use OrganizationScope;
+
     public function __construct(Database $database, int|string $id = '')
     {
         parent::__construct($database, RequirementsTables::providers(), 'rqp', $id);
+    }
+
+    protected static function organizationScopeCondition(): string
+    {
+        return 'rqp_org_id = ?';
     }
 
     public function getHookId(): ?string
@@ -23,26 +28,26 @@ final class Provider extends Entity
 
     public function isVisible(): bool
     {
-        global $gCurrentOrgId, $gCurrentUserId, $gValidLogin;
+        global $gCurrentOrgId, $gCurrentUser, $gValidLogin;
 
         return $gValidLogin
             && (int)$this->getValue('rqp_org_id') === (int)$gCurrentOrgId
             && (
                 (bool)$this->getValue('rqp_public')
                 || Component::isAdministrable(RequirementsPlugin::ID)
-                || (int)$this->getValue('rqp_usr_id_create') === (int)$gCurrentUserId
+                || (int)$this->getValue('rqp_usr_id_create') === (int)$gCurrentUser->getValue('usr_id')
             );
     }
 
     public function isEditable(): bool
     {
-        global $gCurrentOrgId, $gCurrentUserId, $gValidLogin;
+        global $gCurrentOrgId, $gCurrentUser, $gValidLogin;
 
         return $gValidLogin
             && (int)$this->getValue('rqp_org_id') === (int)$gCurrentOrgId
             && (
                 Component::isAdministrable(RequirementsPlugin::ID)
-                || (int)$this->getValue('rqp_usr_id_create') === (int)$gCurrentUserId
+                || (int)$this->getValue('rqp_usr_id_create') === (int)$gCurrentUser->getValue('usr_id')
             );
     }
 

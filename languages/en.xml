@@ -4,6 +4,8 @@
   <string name="PLG_REQUIREMENTS_ACTIVITIES">Activities</string>
   <string name="PLG_REQUIREMENTS_ACTIVITY">Activity</string>
   <string name="PLG_REQUIREMENTS_ACTIVITY_CREDITS">Activity credits</string>
+  <string name="PLG_REQUIREMENTS_ACTIVITY_VIEW">View activity</string>
+  <string name="PLG_REQUIREMENTS_ACTIVITY_VIEW_ONLY">This activity has been submitted and can no longer be changed. An administrator can still correct it.</string>
   <string name="PLG_REQUIREMENTS_ADD_CREDIT_TYPE">Add credit for another requirement</string>
   <string name="PLG_REQUIREMENTS_ADD_ROLE_RULE">Add role rule</string>
   <string name="PLG_REQUIREMENTS_ANCHOR_CALENDAR">Calendar period (fixed year/quarter/month/week)</string>
@@ -13,6 +15,7 @@
   <string name="PLG_REQUIREMENTS_CALENDAR_MULTI_PERIOD_UNSUPPORTED">Calendar periods with a count greater than one are not supported yet because their alignment anchor is not defined.</string>
   <string name="PLG_REQUIREMENTS_CERTIFICATE_DATE">Certificate date</string>
   <string name="PLG_REQUIREMENTS_CERTIFICATE_DATE_HELP">Optional date shown on the certificate, for example the examination date.</string>
+  <string name="PLG_REQUIREMENTS_CONTRIBUTIONS_TO">Only the activities credited to #VAR1# are shown.</string>
   <string name="PLG_REQUIREMENTS_CREDITED_PERIOD">Credited period</string>
   <string name="PLG_REQUIREMENTS_CREDITED_PERIOD_HELP">The requirement period each contribution is credited to. Defaults to the activity begin date.</string>
   <string name="PLG_REQUIREMENTS_CREDITS_ACCEPTED">Accepted credits</string>
@@ -27,6 +30,7 @@
   <string name="PLG_REQUIREMENTS_INACTIVE">inactive</string>
   <string name="PLG_REQUIREMENTS_INVALID_ACTIVITY_PERIOD">The activity end date must not be before its begin date.</string>
   <string name="PLG_REQUIREMENTS_INVALID_VALIDITY_PERIOD">The rule validity end date must not be before its start date.</string>
+  <string name="PLG_REQUIREMENTS_LAST_FULFILMENT">Last fulfilment</string>
   <string name="PLG_REQUIREMENTS_LOCATION">Location</string>
   <string name="PLG_REQUIREMENTS_MEMBERSHIP_AT_PERIOD_START">Member on the first day of the period</string>
   <string name="PLG_REQUIREMENTS_MEMBERSHIP_AT_PERIOD_START_HELP">If enabled, the obligation only arises when the user was a member of the role on the first day of the requirement period.</string>
@@ -36,6 +40,7 @@
   <string name="PLG_REQUIREMENTS_MULTIPLE_ROLES_MODE_HELP">How the obligations of several qualifying roles are combined for one member.</string>
   <string name="PLG_REQUIREMENTS_MULTIPLE_ROLES_SUM">Sum of all role obligations</string>
   <string name="PLG_REQUIREMENTS_NAME">Requirements</string>
+  <string name="PLG_REQUIREMENTS_NEXT_DUE">Next due</string>
   <string name="PLG_REQUIREMENTS_NO_ROLE_RULES">No role rules defined for this requirement type yet.</string>
   <string name="PLG_REQUIREMENTS_OVERVIEW_HEADLINE">Requirement fulfilment</string>
   <string name="PLG_REQUIREMENTS_OVERVIEW_NONE">No requirement is assigned to your current roles.</string>
@@ -44,6 +49,7 @@
   <string name="PLG_REQUIREMENTS_PARTIAL_FULL">Full amount regardless of partial membership</string>
   <string name="PLG_REQUIREMENTS_PARTIAL_PERIOD_MODE">Partial period</string>
   <string name="PLG_REQUIREMENTS_PARTIAL_PRO_RATA">Pro rata to the qualifying membership</string>
+  <string name="PLG_REQUIREMENTS_PENDING">#VAR1# not submitted yet</string>
   <string name="PLG_REQUIREMENTS_PERIOD_ANCHOR">Period anchor</string>
   <string name="PLG_REQUIREMENTS_PERIOD_CALENDAR_MONTH">Calendar month</string>
   <string name="PLG_REQUIREMENTS_PERIOD_CALENDAR_QUARTER">Calendar quarter</string>
@@ -77,6 +83,7 @@
   <string name="PLG_REQUIREMENTS_PROVIDER_SHORT_NAME_HELP">Optional abbreviation used in imports and reports. Must be unique among public providers, or among your own private providers.</string>
   <string name="PLG_REQUIREMENTS_REQUIRED_CREDITS">Required credits</string>
   <string name="PLG_REQUIREMENTS_REQUIREMENT_ACTIVE_HELP">An inactive requirement type is no longer offered for new configuration but existing obligations keep being calculated.</string>
+  <string name="PLG_REQUIREMENTS_REQUIREMENT_HAS_CREDITS">This requirement type still has #VAR1# credited contributions and cannot be deleted. Deactivate it instead, or remove the contributions first.</string>
   <string name="PLG_REQUIREMENTS_REQUIREMENT_SHORT_NAME_DUPLICATE">This requirement short name is already used in the current organization.</string>
   <string name="PLG_REQUIREMENTS_REQUIREMENT_SHORT_NAME_HELP">Optional abbreviation used in imports, reports and the fulfilment overview.</string>
   <string name="PLG_REQUIREMENTS_REQUIREMENT_TYPE">Requirement type</string>
@@ -97,11 +104,16 @@
   <string name="PLG_REQUIREMENTS_SEARCH_REQUIREMENTS">Search requirement types</string>
   <string name="PLG_REQUIREMENTS_SHORT_NAME">Short name</string>
   <string name="PLG_REQUIREMENTS_SHOW_ALL">Show all</string>
+  <string name="PLG_REQUIREMENTS_SHOW_CONTRIBUTIONS">Show the activities this period is made up of</string>
   <string name="PLG_REQUIREMENTS_STATUS">Status</string>
   <string name="PLG_REQUIREMENTS_STATUS_DRAFT">Draft</string>
   <string name="PLG_REQUIREMENTS_STATUS_SUBMITTED">Submitted</string>
   <string name="PLG_REQUIREMENTS_STATUS_WITHDRAWN">Withdrawn</string>
+  <string name="PLG_REQUIREMENTS_SUBMIT">Submit for review</string>
+  <string name="PLG_REQUIREMENTS_SUBMIT_CONFIRM">Do you want to submit the activity &quot;#VAR1#&quot; for review? Depending on the organization settings you may no longer be able to change it afterwards.</string>
   <string name="PLG_REQUIREMENTS_VALIDITY">Validity</string>
   <string name="PLG_REQUIREMENTS_VALID_FROM">Valid from</string>
   <string name="PLG_REQUIREMENTS_VALID_UNTIL">Valid until</string>
+  <string name="PLG_REQUIREMENTS_WARNING_MIXED_RULES">The role &quot;#VAR1#&quot; has both full and pro-rata rules in this period. The higher of the two obligations is used; correct the rules.</string>
+  <string name="PLG_REQUIREMENTS_WARNING_SEVERAL_FULL_RULES">The role &quot;#VAR1#&quot; has several full-amount rules in this period. The highest value is used; correct the rules.</string>
 </resources>

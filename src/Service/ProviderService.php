@@ -17,9 +17,9 @@ final class ProviderService
 
     public function save(Provider $provider, array $values): Provider
     {
-        global $gCurrentOrgId, $gCurrentUserId, $gValidLogin;
+        global $gCurrentOrgId, $gCurrentUser;
 
-        if (!$gValidLogin || !Component::isVisible(RequirementsPlugin::ID)) {
+        if (!RequirementsPlugin::isUsableByCurrentUser()) {
             throw new Exception('SYS_NO_RIGHTS');
         }
 
@@ -58,7 +58,7 @@ final class ProviderService
 
         $this->assertShortNameAvailable(
             $provider,
-            $isNew ? (int)$gCurrentUserId : (int)$provider->getValue('rqp_usr_id_create')
+            $isNew ? (int)$gCurrentUser->getValue('usr_id') : (int)$provider->getValue('rqp_usr_id_create')
         );
 
         $this->db->startTransaction();
@@ -81,7 +81,7 @@ final class ProviderService
      */
     public function findVisible(string $query = ''): array
     {
-        global $gCurrentOrgId, $gCurrentUserId;
+        global $gCurrentOrgId, $gCurrentUser;
 
         $sql = 'SELECT rqp_id, rqp_uuid, rqp_name, rqp_short_name, rqp_url, rqp_address,
                        rqp_public, rqp_qualified, rqp_usr_id_create
@@ -91,14 +91,14 @@ final class ProviderService
 
         if (!Component::isAdministrable(RequirementsPlugin::ID)) {
             $sql .= ' AND (rqp_public = true OR rqp_usr_id_create = ?)';
-            $params[] = (int) $gCurrentUserId;
+            $params[] = (int) $gCurrentUser->getValue('usr_id');
         }
         if ($query !== '') {
             $sql .= ' AND (rqp_name LIKE ? OR rqp_short_name LIKE ?)';
             $params[] = '%' . $query . '%';
             $params[] = '%' . $query . '%';
         }
-        $sql .= ' ORDER BY rqp_qualified DESC, rqp_name';
+        $sql .= ' ORDER BY rqp_qualified DESC, rqp_name, rqp_id';
 
         return $this->db->getArrayFromSql($sql, $params);
     }

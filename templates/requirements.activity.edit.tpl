@@ -1,5 +1,11 @@
 <form {foreach $attributes as $attribute}{$attribute@key}="{$attribute}" {/foreach}>
-    <div class="admidio-form-required-notice"><span>{$l10n->get('SYS_REQUIRED_INPUT')}</span></div>
+    {if $readOnly}
+        <div class="alert alert-info" role="alert">
+            <i class="bi bi-lock-fill"></i> {$l10n->get('PLG_REQUIREMENTS_ACTIVITY_VIEW_ONLY')}
+        </div>
+    {else}
+        <div class="admidio-form-required-notice"><span>{$l10n->get('SYS_REQUIRED_INPUT')}</span></div>
+    {/if}
 
     {include 'sys-template-parts/form.input.tpl' data=$elements['adm_csrf_token']}
 
@@ -47,15 +53,15 @@
                                         {if $cf.kind eq 'year'}
                                             <input type="number" step="1" min="1900" max="{$cf.maxYear}" name="{$cf.periodId}" id="{$cf.periodId}"
                                                    value="{$cf.periodValue}" data-kind="year"
-                                                   class="form-control form-control-sm adm-req-period"
+                                                   class="form-control form-control-sm adm-req-period"{if $readOnly} readonly disabled{/if}
                                                    placeholder="{$l10n->get('PLG_REQUIREMENTS_PERIOD_YEAR')}">
                                         {elseif $cf.kind eq 'quarter'}
                                             <div class="input-group input-group-sm">
                                                 <input type="number" step="1" min="1900" max="{$cf.maxYear}" name="{$cf.periodId}" id="{$cf.periodId}"
                                                        value="{$cf.periodValue}" data-kind="quarter"
-                                                       class="form-control adm-req-period"
+                                                       class="form-control adm-req-period"{if $readOnly} readonly disabled{/if}
                                                        placeholder="{$l10n->get('PLG_REQUIREMENTS_PERIOD_YEAR')}">
-                                                <select name="{$cf.quarterId}" id="{$cf.quarterId}" class="form-select adm-req-period-quarter">
+                                                <select name="{$cf.quarterId}" id="{$cf.quarterId}" class="form-select adm-req-period-quarter"{if $readOnly} readonly disabled{/if}>
                                                     {foreach [1,2,3,4] as $q}
                                                         <option value="{$q}" {if $cf.quarterValue eq $q}selected{/if}>Q{$q}</option>
                                                     {/foreach}
@@ -63,24 +69,24 @@
                                             </div>
                                         {elseif $cf.kind eq 'month'}
                                             <input type="month" name="{$cf.periodId}" id="{$cf.periodId}" value="{$cf.periodValue}"
-                                                   data-kind="month" class="form-control form-control-sm adm-req-period">
+                                                   data-kind="month" class="form-control form-control-sm adm-req-period"{if $readOnly} readonly disabled{/if}>
                                         {elseif $cf.kind eq 'week'}
                                             <input type="week" name="{$cf.periodId}" id="{$cf.periodId}" value="{$cf.periodValue}"
-                                                   data-kind="week" class="form-control form-control-sm adm-req-period">
+                                                   data-kind="week" class="form-control form-control-sm adm-req-period"{if $readOnly} readonly disabled{/if}>
                                         {else}
                                             <input type="date" name="{$cf.periodId}" id="{$cf.periodId}" value="{$cf.periodValue}"
-                                                   data-kind="date" class="form-control form-control-sm adm-req-period">
+                                                   data-kind="date" class="form-control form-control-sm adm-req-period"{if $readOnly} readonly disabled{/if}>
                                         {/if}
                                     </td>
                                     <td>
                                         <input type="number" step="0.01" min="0" name="{$cf.claimedId}" id="{$cf.claimedId}"
-                                               value="{$cf.claimedValue}" class="form-control form-control-sm">
+                                               value="{$cf.claimedValue}" class="form-control form-control-sm"{if $readOnly} readonly disabled{/if}>
                                     </td>
                                     {if $showReview}
                                         <td>
                                             {if $cf.acceptedId}
                                                 <input type="number" step="0.01" min="0" name="{$cf.acceptedId}" id="{$cf.acceptedId}"
-                                                       value="{$cf.acceptedValue}" class="form-control form-control-sm">
+                                                       value="{$cf.acceptedValue}" class="form-control form-control-sm"{if $readOnly} readonly disabled{/if}>
                                             {/if}
                                         </td>
                                     {/if}
@@ -90,7 +96,7 @@
                     </table>
                 </div>
 
-                {if $optionalCreditTypes|@count gt 0}
+                {if $optionalCreditTypes|@count gt 0 and not $readOnly}
                     <div class="row g-2 align-items-end" id="adm_req_add_credit_wrap">
                         <div class="col-sm-8">
                             <label for="adm_req_add_credit" class="form-label small mb-1">{$l10n->get('PLG_REQUIREMENTS_ADD_CREDIT_TYPE')}</label>
@@ -122,6 +128,8 @@
     </div>
 
     <div class="form-alert" style="display: none;">&nbsp;</div>
-    {include 'sys-template-parts/form.button.tpl' data=$elements['adm_button_save']}
+    {if not $readOnly}
+        {include 'sys-template-parts/form.button.tpl' data=$elements['adm_button_save']}
+    {/if}
     {include file="sys-template-parts/system.info-create-edit.tpl"}
 </form>

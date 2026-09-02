@@ -1,6 +1,7 @@
 <?php
 namespace AdmidioPlugin\Requirements\Presenter;
 
+use Admidio\Changelog\Service\ChangelogService;
 use Admidio\Components\Entity\Component;
 use Admidio\Infrastructure\Exception;
 use Admidio\Infrastructure\Plugins\Plugin;
@@ -31,9 +32,24 @@ abstract class RequirementsPresenter extends PagePresenter
             $this->addTemplateFolder($templates);
         }
 
-        if (!Component::isVisible(RequirementsPlugin::ID)) {
+        if (!RequirementsPlugin::isUsableByCurrentUser()) {
             throw new Exception('SYS_NO_RIGHTS');
         }
+    }
+
+    /**
+     * Offer the change history of the given plugin tables in the page-functions menu.
+     *
+     * `displayHistoryButton()` decides for itself whether the button appears: it checks that the
+     * changelog is switched on, that those tables are logged, and that the current user may read
+     * them - which for the requirements tables is the callback in plugin.php.
+     *
+     * @param array<int,string> $tables
+     * @param array<string,mixed> $parameters uuid, id or related_id to narrow the history down
+     */
+    protected function addHistoryMenuItem(string $area, array $tables, array $parameters = array()): void
+    {
+        ChangelogService::displayHistoryButton($this, 'requirements_' . $area, $tables, true, $parameters);
     }
 
     protected function isAdmin(): bool
@@ -54,14 +70,36 @@ abstract class RequirementsPresenter extends PagePresenter
      */
     protected function deleteAction(string $rowHtmlId, string $url, string $message): array
     {
-        global $gCurrentSession, $gL10n;
+        global $gL10n;
+
+        return $this->confirmedPostAction($rowHtmlId, $url, $message, 'bi bi-trash', $gL10n->get('SYS_DELETE'));
+    }
+
+    /**
+     * An action entry for sys-template-parts/list.functions.tpl that asks for confirmation and then
+     * posts to $url with the CSRF token.
+     *
+     * Without $jsCallback the row fades out on success, which is what a delete wants. An action that
+     * only changes a record - submitting an activity, say - names a global JavaScript function
+     * instead, so the row stays and the page can show the new state.
+     */
+    protected function confirmedPostAction(
+        string $rowHtmlId,
+        string $url,
+        string $message,
+        string $icon,
+        string $tooltip,
+        string $jsCallback = ''
+    ): array {
+        global $gCurrentSession;
 
         return array(
             'dataHref' => 'callUrlHideElement(\'' . $rowHtmlId . '\', \'' . $url . '\', \''
-                . $gCurrentSession->getCsrfToken() . '\')',
+                . $gCurrentSession->getCsrfToken() . '\''
+                . ($jsCallback === '' ? '' : ', \'' . $jsCallback . '\'') . ')',
             'dataMessage' => $message,
-            'icon' => 'bi bi-trash',
-            'tooltip' => $gL10n->get('SYS_DELETE')
+            'icon' => $icon,
+            'tooltip' => $tooltip
         );
     }
 }

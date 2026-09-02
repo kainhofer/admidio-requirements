@@ -8,8 +8,12 @@
     .adm-req-overview .adm-req-fill { position: absolute; top: 0; left: 0; bottom: 0; }
     .adm-req-overview .adm-req-fill.ok { background: var(--bs-success, #198754); }
     .adm-req-overview .adm-req-fill.miss { background: var(--bs-warning, #ffc107); }
+    .adm-req-overview .adm-req-fill.over { background: var(--bs-danger, #dc3545); }
     .adm-req-overview .adm-req-fill.none { background: var(--bs-secondary, #adb5bd); }
     .adm-req-overview .adm-req-val { font-size: .75rem; }
+    .adm-req-overview .adm-req-bar-link { display: block; text-decoration: none; color: inherit; }
+    .adm-req-overview .adm-req-bar-link:hover .adm-req-track { outline: 2px solid var(--bs-primary, #0d6efd); }
+    .adm-req-overview .adm-req-pending { font-size: .7rem; font-style: italic; color: var(--bs-secondary-color, #6c757d); }
 </style>
 
 {if $overview|@count eq 0 and $overviewHint}
@@ -31,10 +35,12 @@
                     <div class="adm-req-bars">
                         {foreach $req.periods as $p}
                             <div class="adm-req-bar">
+                                {if $p.url}<a class="adm-req-bar-link" href="{$p.url}"
+                                    title="{$l10n->get('PLG_REQUIREMENTS_SHOW_CONTRIBUTIONS')}">{/if}
                                 <div class="adm-req-bar-label">{$p.label}</div>
                                 <div class="adm-req-track">
                                     {if $p.percent is not null}
-                                        <div class="adm-req-fill {if $p.status eq 'fulfilled'}ok{elseif $p.status eq 'missing'}miss{else}none{/if}"
+                                        <div class="adm-req-fill {if $p.status eq 'fulfilled'}ok{elseif $p.status eq 'overdue' or $p.status eq 'never-fulfilled'}over{elseif $p.status eq 'missing'}miss{else}none{/if}"
                                              style="width: {$p.percent}%;"></div>
                                     {/if}
                                 </div>
@@ -47,6 +53,10 @@
                                         &ndash;
                                     {/if}
                                 </div>
+                                {if $p.pending gt 0}
+                                    <div class="adm-req-pending">{$l10n->get('PLG_REQUIREMENTS_PENDING', [$p.pending])}</div>
+                                {/if}
+                                {if $p.url}</a>{/if}
                             </div>
                         {/foreach}
                     </div>
@@ -78,6 +88,15 @@
         </form>
     </div>
 </div>
+
+{if $periodLabel}
+    <div class="alert alert-secondary d-flex justify-content-between align-items-center" role="alert">
+        <span><i class="bi bi-funnel-fill"></i>
+            {$l10n->get('PLG_REQUIREMENTS_CONTRIBUTIONS_TO', [$periodLabel])}</span>
+        <a href="{$clearPeriodUrl}" class="btn btn-sm btn-outline-secondary">
+            {$l10n->get('PLG_REQUIREMENTS_SHOW_ALL')}</a>
+    </div>
+{/if}
 
 {if $rows|@count eq 0}
     <div class="alert alert-info" role="alert">

@@ -5,10 +5,11 @@
  * activity edit form.
  *
  * Parameters:
- * mode        : list (default) | edit | save | delete
+ * mode        : list (default) | edit | save | submit | delete
  * uuid        : UUID of the activity for edit / save / delete
  * query       : free-text filter for the activity list
  * requirement : UUID of the requirement type whose credits the list shows
+ * period      : credited period the list is narrowed to, for one bar of the overview
  *
  * @copyright The Admidio Team
  * @see https://www.admidio.org/
@@ -16,14 +17,13 @@
  ***********************************************************************************************
  */
 
+use Admidio\Infrastructure\Exception;
 use Admidio\Infrastructure\Plugins\PluginRegistry;
 use Admidio\Infrastructure\Utils\SecurityUtils;
 use AdmidioPlugin\Requirements\Entity\Activity;
-use AdmidioPlugin\Requirements\Entity\RequirementType;
 use AdmidioPlugin\Requirements\Presenter\ActivityPresenter;
 use AdmidioPlugin\Requirements\RequirementsPlugin;
 use AdmidioPlugin\Requirements\Service\ActivityService;
-use AdmidioPlugin\Requirements\Service\FulfilmentService;
 use AdmidioPlugin\Requirements\Service\RequirementTypeService;
 
 try {
@@ -32,18 +32,19 @@ try {
 
     $getMode = admFuncVariableIsValid($_GET, 'mode', 'string', array(
         'defaultValue' => 'list',
-        'validValues' => array('list', 'edit', 'save', 'delete')
+        'validValues' => array('list', 'edit', 'save', 'submit', 'delete')
     ));
     // No defaultValue here: admFuncVariableIsValid() only returns early for a missing parameter
     // when none is set, otherwise it would validate the empty string against the datatype.
     $getUuid = admFuncVariableIsValid($_GET, 'uuid', 'uuid');
     $getQuery = admFuncVariableIsValid($_GET, 'query', 'string');
     $getRequirement = admFuncVariableIsValid($_GET, 'requirement', 'uuid');
+    $getPeriod = admFuncVariableIsValid($_GET, 'period', 'date');
 
     switch ($getMode) {
         case 'list':
             $page = new ActivityPresenter();
-            $page->createList($getQuery, $getRequirement);
+            $page->createList($getQuery, $getRequirement, $getPeriod);
             $gNavigation->addStartUrl(CURRENT_URL, $page->getHeadline(), 'bi-clipboard-check');
             $page->show();
             break;
@@ -60,7 +61,12 @@ try {
 
             $activity = new Activity($gDb);
             if ($getUuid !== '') {
+                // Without this an unknown or stale UUID would leave a new record, and the save would
+                // quietly create one instead of saying that the activity is gone.
                 $activity->readDataByUuid($getUuid);
+                if ((int) $activity->getValue('rqa_id') === 0) {
+                    throw new Exception('SYS_INVALID_PAGE_VIEW');
+                }
             }
 
             $formValues = $gCurrentSession->getFormObject($_POST['adm_csrf_token'])->validate($_POST);
@@ -90,39 +96,27 @@ try {
                 $values['rqa_provider_id'] = null;
             }
 
-            $activityService->save($activity, $values);
-
-            // Persist the per-requirement credit contributions.
-            $typeService = new RequirementTypeService($gDb);
-            foreach ($typeService->findTypes() as $typeRow) {
+            // Collect the per-requirement credit rows the form submitted. The service writes them
+            // together with the activity in one transaction.
+            $creditInput = array();
+            foreach ((new RequirementTypeService($gDb))->findTypes() as $typeRow) {
                 $typeId = (int) $typeRow['rqt_id'];
                 if (!array_key_exists('credit_' . $typeId, $formValues)) {
                     continue;
                 }
 
-                $claimed = trim((string) $formValues['credit_' . $typeId]) === ''
-                    ? null : (float) $formValues['credit_' . $typeId];
-                $accepted = array_key_exists('accepted_' . $typeId, $formValues)
-                    && trim((string) $formValues['accepted_' . $typeId]) !== ''
-                    ? (float) $formValues['accepted_' . $typeId] : null;
-
-                $type = new RequirementType($gDb);
-                $type->readDataById($typeId);
-
-                // Only resolve the period control (year / YYYY-MM / YYYY-Www / year+quarter / date)
-                // when a value is actually being written; an untouched row must not fail validation.
-                $periodDate = null;
-                $period = trim((string) ($formValues['period_' . $typeId] ?? ''));
-                if ($period !== '' && ($claimed !== null || $accepted !== null)) {
-                    $periodDate = FulfilmentService::periodInputToDate(
-                        $type,
-                        $period,
-                        trim((string) ($formValues['periodq_' . $typeId] ?? ''))
-                    );
-                }
-
-                $activityService->syncCredit($activity, $type, $periodDate, $claimed, $accepted);
+                $creditInput[$typeId] = array(
+                    'period' => trim((string) ($formValues['period_' . $typeId] ?? '')),
+                    'quarter' => trim((string) ($formValues['periodq_' . $typeId] ?? '')),
+                    'claimed' => trim((string) $formValues['credit_' . $typeId]) === ''
+                        ? null : (float) $formValues['credit_' . $typeId],
+                    'accepted' => array_key_exists('accepted_' . $typeId, $formValues)
+                        && trim((string) $formValues['accepted_' . $typeId]) !== ''
+                        ? (float) $formValues['accepted_' . $typeId] : null
+                );
             }
+
+            $activityService->saveWithCredits($activity, $values, $creditInput);
 
             if ($createProvider) {
                 $plugin = PluginRegistry::requireEnabled(RequirementsPlugin::ID);
@@ -141,6 +135,14 @@ try {
             echo json_encode(array('status' => 'success', 'url' => $gNavigation->getUrl()));
             break;
 
+        case 'submit':
+            SecurityUtils::validateCsrfToken($_POST['adm_csrf_token']);
+            $activity = new Activity($gDb);
+            $activity->readDataByUuid($getUuid);
+            (new ActivityService($gDb))->submit($activity);
+            echo json_encode(array('status' => 'success'));
+            break;
+
         case 'delete':
             SecurityUtils::validateCsrfToken($_POST['adm_csrf_token']);
             $activity = new Activity($gDb);
@@ -150,5 +152,5 @@ try {
             break;
     }
 } catch (Throwable $e) {
-    handleException($e, in_array($getMode ?? '', array('save', 'delete')));
+    handleException($e, in_array($getMode ?? '', array('save', 'submit', 'delete')));
 }

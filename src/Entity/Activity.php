@@ -1,19 +1,24 @@
 <?php
 namespace AdmidioPlugin\Requirements\Entity;
 
+use Admidio\Components\Entity\Component;
 use Admidio\Infrastructure\Database;
 use Admidio\Infrastructure\Entity\Entity;
-use Admidio\Infrastructure\Exception;
 use AdmidioPlugin\Requirements\Database\RequirementsTables;
-
-use Admidio\Components\Entity\Component;
 use AdmidioPlugin\Requirements\RequirementsPlugin;
 
 final class Activity extends Entity
 {
+    use OrganizationScope;
+
     public function __construct(Database $database, int|string $id = '')
     {
         parent::__construct($database, RequirementsTables::activities(), 'rqa', $id);
+    }
+
+    protected static function organizationScopeCondition(): string
+    {
+        return 'rqa_org_id = ?';
     }
 
     public function getHookId(): ?string

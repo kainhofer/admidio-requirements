@@ -4,6 +4,8 @@
   <string name="PLG_REQUIREMENTS_ACTIVITIES">Aktivitäten</string>
   <string name="PLG_REQUIREMENTS_ACTIVITY">Aktivität</string>
   <string name="PLG_REQUIREMENTS_ACTIVITY_CREDITS">Aktivitäts-Anrechnungen</string>
+  <string name="PLG_REQUIREMENTS_ACTIVITY_VIEW">Aktivität ansehen</string>
+  <string name="PLG_REQUIREMENTS_ACTIVITY_VIEW_ONLY">Diese Aktivität wurde eingereicht und kann nicht mehr geändert werden. Eine Administratorin oder ein Administrator kann sie weiterhin korrigieren.</string>
   <string name="PLG_REQUIREMENTS_ADD_CREDIT_TYPE">Anrechnung für weitere Anforderung hinzufügen</string>
   <string name="PLG_REQUIREMENTS_ADD_ROLE_RULE">Rollenregel hinzufügen</string>
   <string name="PLG_REQUIREMENTS_ANCHOR_CALENDAR">Kalenderzeitraum (festes Jahr/Quartal/Monat/Woche)</string>
@@ -13,6 +15,7 @@
   <string name="PLG_REQUIREMENTS_CALENDAR_MULTI_PERIOD_UNSUPPORTED">Kalenderzeiträume mit einer Anzahl größer als eins werden noch nicht unterstützt, da ihr Ausrichtungsanker nicht definiert ist.</string>
   <string name="PLG_REQUIREMENTS_CERTIFICATE_DATE">Zertifikatsdatum</string>
   <string name="PLG_REQUIREMENTS_CERTIFICATE_DATE_HELP">Optionales Datum auf dem Zertifikat, z. B. das Prüfungsdatum.</string>
+  <string name="PLG_REQUIREMENTS_CONTRIBUTIONS_TO">Es werden nur die Aktivitäten angezeigt, die #VAR1# angerechnet werden.</string>
   <string name="PLG_REQUIREMENTS_CREDITED_PERIOD">Anrechnungszeitraum</string>
   <string name="PLG_REQUIREMENTS_CREDITED_PERIOD_HELP">Der Anforderungszeitraum, dem der jeweilige Beitrag angerechnet wird. Vorbelegt mit dem Beginndatum der Aktivität.</string>
   <string name="PLG_REQUIREMENTS_CREDITS_ACCEPTED">Anerkannte Punkte</string>
@@ -27,6 +30,7 @@
   <string name="PLG_REQUIREMENTS_INACTIVE">inaktiv</string>
   <string name="PLG_REQUIREMENTS_INVALID_ACTIVITY_PERIOD">Das Enddatum der Aktivität darf nicht vor dem Beginndatum liegen.</string>
   <string name="PLG_REQUIREMENTS_INVALID_VALIDITY_PERIOD">Das Ende der Regelgültigkeit darf nicht vor dem Beginn liegen.</string>
+  <string name="PLG_REQUIREMENTS_LAST_FULFILMENT">Letzte Erfüllung</string>
   <string name="PLG_REQUIREMENTS_LOCATION">Ort</string>
   <string name="PLG_REQUIREMENTS_MEMBERSHIP_AT_PERIOD_START">Mitglied am ersten Tag des Zeitraums</string>
   <string name="PLG_REQUIREMENTS_MEMBERSHIP_AT_PERIOD_START_HELP">Wenn aktiv, entsteht die Verpflichtung nur, wenn die Person am ersten Tag des Anforderungszeitraums Mitglied der Rolle war.</string>
@@ -36,6 +40,7 @@
   <string name="PLG_REQUIREMENTS_MULTIPLE_ROLES_MODE_HELP">Wie die Verpflichtungen mehrerer zutreffender Rollen für ein Mitglied kombiniert werden.</string>
   <string name="PLG_REQUIREMENTS_MULTIPLE_ROLES_SUM">Summe aller Rollen-Verpflichtungen</string>
   <string name="PLG_REQUIREMENTS_NAME">Anforderungen</string>
+  <string name="PLG_REQUIREMENTS_NEXT_DUE">Nächste Fälligkeit</string>
   <string name="PLG_REQUIREMENTS_NO_ROLE_RULES">Für diesen Anforderungstyp sind noch keine Rollenregeln definiert.</string>
   <string name="PLG_REQUIREMENTS_OVERVIEW_HEADLINE">Anforderungserfüllung</string>
   <string name="PLG_REQUIREMENTS_OVERVIEW_NONE">Für deine aktuellen Rollen ist keine Anforderung hinterlegt.</string>
@@ -44,6 +49,7 @@
   <string name="PLG_REQUIREMENTS_PARTIAL_FULL">Voller Betrag unabhängig von Teilmitgliedschaft</string>
   <string name="PLG_REQUIREMENTS_PARTIAL_PERIOD_MODE">Teilzeitraum</string>
   <string name="PLG_REQUIREMENTS_PARTIAL_PRO_RATA">Anteilig zur zutreffenden Mitgliedschaft</string>
+  <string name="PLG_REQUIREMENTS_PENDING">#VAR1# noch nicht eingereicht</string>
   <string name="PLG_REQUIREMENTS_PERIOD_ANCHOR">Zeitraumanker</string>
   <string name="PLG_REQUIREMENTS_PERIOD_CALENDAR_MONTH">Kalendermonat</string>
   <string name="PLG_REQUIREMENTS_PERIOD_CALENDAR_QUARTER">Kalenderquartal</string>
@@ -77,6 +83,7 @@
   <string name="PLG_REQUIREMENTS_PROVIDER_SHORT_NAME_HELP">Optionale Abkürzung für Importe und Berichte. Muss unter öffentlichen Anbietern bzw. unter den eigenen privaten Anbietern eindeutig sein.</string>
   <string name="PLG_REQUIREMENTS_REQUIRED_CREDITS">Erforderliche Punkte</string>
   <string name="PLG_REQUIREMENTS_REQUIREMENT_ACTIVE_HELP">Ein inaktiver Anforderungstyp wird nicht mehr für neue Konfigurationen angeboten, bestehende Verpflichtungen werden aber weiter berechnet.</string>
+  <string name="PLG_REQUIREMENTS_REQUIREMENT_HAS_CREDITS">Zu diesem Anforderungstyp gibt es noch #VAR1# angerechnete Beiträge, er kann daher nicht gelöscht werden. Deaktiviere ihn stattdessen oder entferne zuerst die Beiträge.</string>
   <string name="PLG_REQUIREMENTS_REQUIREMENT_SHORT_NAME_DUPLICATE">Dieser Anforderungs-Kurzname wird in der aktuellen Organisation bereits verwendet.</string>
   <string name="PLG_REQUIREMENTS_REQUIREMENT_SHORT_NAME_HELP">Optionale Abkürzung für Importe, Berichte und die Erfüllungsübersicht.</string>
   <string name="PLG_REQUIREMENTS_REQUIREMENT_TYPE">Anforderungstyp</string>
@@ -97,11 +104,16 @@
   <string name="PLG_REQUIREMENTS_SEARCH_REQUIREMENTS">Anforderungstypen suchen</string>
   <string name="PLG_REQUIREMENTS_SHORT_NAME">Kurzname</string>
   <string name="PLG_REQUIREMENTS_SHOW_ALL">Alle anzeigen</string>
+  <string name="PLG_REQUIREMENTS_SHOW_CONTRIBUTIONS">Die Aktivitäten anzeigen, aus denen sich dieser Zeitraum zusammensetzt</string>
   <string name="PLG_REQUIREMENTS_STATUS">Status</string>
   <string name="PLG_REQUIREMENTS_STATUS_DRAFT">Entwurf</string>
   <string name="PLG_REQUIREMENTS_STATUS_SUBMITTED">Eingereicht</string>
   <string name="PLG_REQUIREMENTS_STATUS_WITHDRAWN">Zurückgezogen</string>
+  <string name="PLG_REQUIREMENTS_SUBMIT">Zur Prüfung einreichen</string>
+  <string name="PLG_REQUIREMENTS_SUBMIT_CONFIRM">Soll die Aktivität &quot;#VAR1#&quot; zur Prüfung eingereicht werden? Je nach Organisationseinstellung kann sie danach nicht mehr geändert werden.</string>
   <string name="PLG_REQUIREMENTS_VALIDITY">Gültigkeit</string>
   <string name="PLG_REQUIREMENTS_VALID_FROM">Gültig ab</string>
   <string name="PLG_REQUIREMENTS_VALID_UNTIL">Gültig bis</string>
+  <string name="PLG_REQUIREMENTS_WARNING_MIXED_RULES">Für die Rolle &quot;#VAR1#&quot; gibt es in diesem Zeitraum sowohl volle als auch anteilige Regeln. Es wird die höhere der beiden Verpflichtungen verwendet; bitte die Regeln korrigieren.</string>
+  <string name="PLG_REQUIREMENTS_WARNING_SEVERAL_FULL_RULES">Für die Rolle &quot;#VAR1#&quot; gibt es in diesem Zeitraum mehrere Regeln mit vollem Betrag. Es wird der höchste Wert verwendet; bitte die Regeln korrigieren.</string>
 </resources>

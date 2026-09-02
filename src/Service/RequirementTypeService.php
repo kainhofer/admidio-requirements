@@ -199,7 +199,8 @@ final class RequirementTypeService
             $params[] = '%' . $query . '%';
             $params[] = '%' . $query . '%';
         }
-        $sql .= ' ORDER BY rqt_sequence, rqt_name';
+        // rqt_id last, so that two types with the same sequence and name keep a stable order.
+        $sql .= ' ORDER BY rqt_sequence, rqt_name, rqt_id';
 
         return $this->db->getArrayFromSql($sql, $params);
     }
@@ -249,6 +250,18 @@ final class RequirementTypeService
             || (int) $type->getValue('rqt_id') === 0
             || (int) $type->getValue('rqt_org_id') !== (int) $gCurrentOrgId) {
             throw new Exception('SYS_NO_RIGHTS');
+        }
+
+        // rac_requirement_type_id is ON DELETE RESTRICT, so the database would refuse this anyway -
+        // but with a driver error instead of a sentence that says which records are in the way.
+        $credits = (int) $this->db->queryPrepared(
+            'SELECT COUNT(*)
+               FROM ' . RequirementsTables::activityCredits() . '
+              WHERE rac_requirement_type_id = ?',
+            array((int) $type->getValue('rqt_id'))
+        )->fetchColumn();
+        if ($credits > 0) {
+            throw new Exception('PLG_REQUIREMENTS_REQUIREMENT_HAS_CREDITS', array($credits));
         }
 
         $this->db->startTransaction();

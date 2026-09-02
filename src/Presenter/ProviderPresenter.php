@@ -17,7 +17,7 @@ class ProviderPresenter extends RequirementsPresenter
      */
     public function createList(string $query = ''): void
     {
-        global $gDb, $gL10n, $gCurrentUserId;
+        global $gDb, $gL10n, $gCurrentUser;
 
         $this->setHtmlID('adm_requirements_providers');
         $this->setHeadline($gL10n->get('PLG_REQUIREMENTS_PROVIDERS'));
@@ -28,6 +28,7 @@ class ProviderPresenter extends RequirementsPresenter
             $this->pageUrl('providers.php', array('mode' => 'edit')),
             'bi-plus-circle-fill'
         );
+        $this->addHistoryMenuItem('providers', array('req_providers'));
 
         $this->assignSmartyVariable('searchUrl', $this->plugin->getUrl('providers.php'));
         $this->assignSmartyVariable('query', $query);
@@ -44,7 +45,8 @@ class ProviderPresenter extends RequirementsPresenter
 
         $rows = array();
         foreach ((new ProviderService($gDb))->findVisible($query) as $provider) {
-            $editable = $this->isAdmin() || (int) $provider['rqp_usr_id_create'] === (int) $gCurrentUserId;
+            $editable = $this->isAdmin()
+                || (int) $provider['rqp_usr_id_create'] === (int) $gCurrentUser->getValue('usr_id');
             $rowId = 'adm_requirements_provider_' . $provider['rqp_uuid'];
             $editUrl = $this->pageUrl('providers.php', array('mode' => 'edit', 'uuid' => $provider['rqp_uuid']));
 

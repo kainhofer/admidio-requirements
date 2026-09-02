@@ -39,7 +39,7 @@ class ActivityPresenter extends RequirementsPresenter
     /**
      * @throws Exception|\Smarty\Exception
      */
-    public function createList(string $query = '', string $requirementUuid = ''): void
+    public function createList(string $query = '', string $requirementUuid = '', string $period = ''): void
     {
         global $gDb, $gL10n, $gCurrentUser;
 
@@ -101,11 +101,32 @@ class ActivityPresenter extends RequirementsPresenter
                 $gL10n->get('PLG_REQUIREMENTS_PROVIDERS'), $this->pageUrl('providers.php'), 'bi-shop');
             $this->addPageFunctionsMenuItem('menu_item_requirements_rules',
                 $gL10n->get('PLG_REQUIREMENTS_REQUIREMENT_TYPES'), $this->pageUrl('rules.php'), 'bi-list-check');
+            $this->addHistoryMenuItem('activities', array('req_activities', 'req_activity_credits'));
         }
 
         // Fulfilment overview bars — running + N previous periods, applicable requirements only.
         $previousPeriods = (int) (RequirementsPlugin::setting(RequirementsPlugin::SETTING_OVERVIEW_PREVIOUS_YEARS) ?? 4);
         $overview = $fulfilment->coverageHistoryForUser($userId, $previousPeriods);
+        // Each bar links to the activities that make it up, which is the answer to "where does this
+        // number come from" - the question a bar always raises and never answers on its own.
+        foreach ($overview as $i => $requirement) {
+            $uuid = '';
+            foreach ($allTypes as $t) {
+                if ((int) $t['rqt_id'] === (int) $requirement['typeId']) {
+                    $uuid = (string) $t['rqt_uuid'];
+                    break;
+                }
+            }
+            foreach ($requirement['periods'] as $j => $periodRow) {
+                $overview[$i]['periods'][$j]['url'] = $uuid === '' || $periodRow['periodReference'] === null
+                    ? ''
+                    : $this->pageUrl('index.php', array(
+                        'mode' => 'list',
+                        'requirement' => $uuid,
+                        'period' => $periodRow['periodReference']
+                    ));
+            }
+        }
         $this->assignSmartyVariable('overview', $overview);
         // Say so rather than silently hiding the card when nothing applies to this member.
         $this->assignSmartyVariable(
@@ -125,8 +146,33 @@ class ActivityPresenter extends RequirementsPresenter
         $headers[] = $gL10n->get('PLG_REQUIREMENTS_PROVIDER');
         $headers[] = '';
 
+        // A period narrows the list to the activities that made up one bar of the overview. It only
+        // means anything together with a requirement, and it is normalised so that a link built from
+        // any day of the period finds the same contributions.
+        $periodFilter = null;
+        $periodLabel = '';
+        if ($period !== '' && $selectedType !== null) {
+            $typeEntity = new RequirementType($gDb);
+            $typeEntity->setArray($selectedType);
+            try {
+                $periodFilter = FulfilmentService::normalizePeriodReference($typeEntity, $period);
+                $parts = FulfilmentService::periodControlValue($selectedKind, $periodFilter);
+                $periodLabel = $parts['quarter'] !== ''
+                    ? $parts['value'] . ' Q' . $parts['quarter']
+                    : $parts['value'];
+            } catch (Exception) {
+                $periodFilter = null;
+            }
+        }
+        $this->assignSmartyVariable('periodLabel', $periodLabel);
+        $this->assignSmartyVariable('clearPeriodUrl', $this->pageUrl('index.php', array(
+            'mode' => 'list',
+            'query' => $query,
+            'requirement' => $requirementUuid
+        )));
+
         $rows = array();
-        foreach ((new ActivityService($gDb))->findActivities(null, $query, $selectedTypeId) as $activity) {
+        foreach ((new ActivityService($gDb))->findActivities(null, $query, $selectedTypeId, $periodFilter) as $activity) {
             $rowId = 'adm_requirements_activity_' . $activity['rqa_uuid'];
             $editUrl = $this->pageUrl('index.php', array('mode' => 'edit', 'uuid' => $activity['rqa_uuid']));
 
@@ -156,6 +202,18 @@ class ActivityPresenter extends RequirementsPresenter
 
             $actions = array();
             $actions[] = array('url' => $editUrl, 'icon' => 'bi bi-pencil-square', 'tooltip' => $gL10n->get('SYS_EDIT'));
+            // A draft only exists under the until_submitted policy, where submitting is what hands
+            // the activity over for review - and the only way out of draft for its owner.
+            if ($editable && (string) $activity['rqa_status'] === 'draft') {
+                $actions[] = $this->confirmedPostAction(
+                    $rowId,
+                    $this->pageUrl('index.php', array('mode' => 'submit', 'uuid' => $activity['rqa_uuid'])),
+                    $gL10n->get('PLG_REQUIREMENTS_SUBMIT_CONFIRM', array($activity['rqa_title'])),
+                    'bi bi-send',
+                    $gL10n->get('PLG_REQUIREMENTS_SUBMIT'),
+                    'admReqReloadPage'
+                );
+            }
             if ($editable) {
                 $actions[] = $this->deleteAction(
                     $rowId,
@@ -172,6 +230,10 @@ class ActivityPresenter extends RequirementsPresenter
                 'statusIcon' => $this->statusIcon($activity)
             );
         }
+
+        // Submitting changes a row rather than removing it, so the list is redrawn instead of
+        // letting callUrlHideElement() fade the row out.
+        $this->addJavascript('function admReqReloadPage() { window.location.reload(); }');
 
         $this->assignSmartyVariable('headers', $headers);
         $this->assignSmartyVariable('rows', $rows);
@@ -227,27 +289,42 @@ class ActivityPresenter extends RequirementsPresenter
 
         $activity = new Activity($gDb);
         $existingCredits = array();
+        // Seeing an activity and being allowed to change it are two questions. Under the
+        // until_submitted policy a member's own submitted activity is visible but not editable, and
+        // refusing the page outright would leave the list linking somewhere they cannot go - so the
+        // page opens read-only instead.
+        $readOnly = false;
         if ($activityUUID !== '') {
             $activity->readDataByUuid($activityUUID);
-            if ((int) $activity->getValue('rqa_id') === 0 || !$activity->isEditable()) {
+            if ((int) $activity->getValue('rqa_id') === 0 || !$activity->isVisible()) {
                 throw new Exception('SYS_NO_RIGHTS');
             }
+            $readOnly = !$activity->isEditable();
             $existingCredits = (new ActivityService($gDb))->creditsForActivity((int) $activity->getValue('rqa_id'));
-            $this->setHeadline($gL10n->get('SYS_EDIT_VAR', array($gL10n->get('PLG_REQUIREMENTS_ACTIVITY'))));
+            $this->setHeadline($readOnly
+                ? $gL10n->get('PLG_REQUIREMENTS_ACTIVITY_VIEW')
+                : $gL10n->get('SYS_EDIT_VAR', array($gL10n->get('PLG_REQUIREMENTS_ACTIVITY'))));
         } else {
             $this->setHeadline($gL10n->get('SYS_CREATE_VAR', array($gL10n->get('PLG_REQUIREMENTS_ACTIVITY'))));
         }
         $this->setHtmlID('adm_requirements_activity_edit');
 
-        $returnUrl = $this->pageUrl('index.php', array('mode' => 'edit', 'uuid' => $activityUUID));
-        $this->addPageFunctionsMenuItem(
-            'menu_item_requirements_provider_add',
-            $gL10n->get('PLG_REQUIREMENTS_PROVIDER_CREATE'),
-            $this->pageUrl('providers.php', array('mode' => 'edit', 'return' => $returnUrl)),
-            'bi-plus-circle-fill'
-        );
+        if (!$readOnly) {
+            $returnUrl = $this->pageUrl('index.php', array('mode' => 'edit', 'uuid' => $activityUUID));
+            $this->addPageFunctionsMenuItem(
+                'menu_item_requirements_provider_add',
+                $gL10n->get('PLG_REQUIREMENTS_PROVIDER_CREATE'),
+                $this->pageUrl('providers.php', array('mode' => 'edit', 'return' => $returnUrl)),
+                'bi-plus-circle-fill'
+            );
+        }
 
         $isAdmin = $this->isAdmin();
+        // A read-only field still submits its value, which is what keeps the form payload
+        // complete; a select cannot be made read-only in a browser, so it is disabled instead.
+        $textProperty = $readOnly ? FormPresenter::FIELD_READONLY : FormPresenter::FIELD_DEFAULT;
+        $requiredProperty = $readOnly ? FormPresenter::FIELD_READONLY : FormPresenter::FIELD_REQUIRED;
+        $choiceProperty = $readOnly ? FormPresenter::FIELD_DISABLED : FormPresenter::FIELD_DEFAULT;
         $form = new FormPresenter(
             'adm_requirements_activity_edit_form',
             'requirements.activity.edit.tpl',
@@ -256,7 +333,7 @@ class ActivityPresenter extends RequirementsPresenter
         );
 
         $form->addInput('rqa_title', $gL10n->get('SYS_TITLE'), (string) $activity->getValue('rqa_title'),
-            array('maxLength' => 255, 'property' => FormPresenter::FIELD_REQUIRED));
+            array('maxLength' => 255, 'property' => $requiredProperty));
 
         $providers = array('' => '');
         foreach ((new ProviderService($gDb))->findVisible() as $provider) {
@@ -266,20 +343,20 @@ class ActivityPresenter extends RequirementsPresenter
         $providers['__new__'] = '＋ ' . $gL10n->get('PLG_REQUIREMENTS_PROVIDER_CREATE_NEW');
         $form->addSelectBox('rqa_provider_id', $gL10n->get('PLG_REQUIREMENTS_PROVIDER'), $providers,
             array('defaultValue' => (int) $activity->getValue('rqa_provider_id'),
-                'showContextDependentFirstEntry' => false,
+                'showContextDependentFirstEntry' => false, 'property' => $choiceProperty,
                 'helpTextId' => 'PLG_REQUIREMENTS_PROVIDER_CREATE_NEW_HELP'));
 
         $beginTime = (string) $activity->getValue('rqa_begin_time', 'database');
         $endTime = (string) $activity->getValue('rqa_end_time', 'database');
         $form->addCheckbox('rqa_full_day', $gL10n->get('PLG_REQUIREMENTS_FULL_DAY'),
             $beginTime === '' && $endTime === '',
-            array('helpTextId' => 'PLG_REQUIREMENTS_FULL_DAY_DESC'));
+            array('helpTextId' => 'PLG_REQUIREMENTS_FULL_DAY_DESC', 'property' => $choiceProperty));
         $form->addInput('rqa_begin', $gL10n->get('SYS_START'),
             self::dateTimeValue((string) $activity->getValue('rqa_begin_date', 'database'), $beginTime),
-            array('type' => 'datetime', 'property' => FormPresenter::FIELD_REQUIRED));
+            array('type' => 'datetime', 'property' => $requiredProperty));
         $form->addInput('rqa_end', $gL10n->get('SYS_END'),
             self::dateTimeValue((string) $activity->getValue('rqa_end_date', 'database'), $endTime),
-            array('type' => 'datetime'));
+            array('type' => 'datetime', 'property' => $textProperty));
 
         // Toggle the two time inputs with the full-day checkbox; keep begin <= end.
         $this->addJavascript('
@@ -300,18 +377,20 @@ class ActivityPresenter extends RequirementsPresenter
             });
         ', true);
         $form->addInput('rqa_attendance', $gL10n->get('PLG_REQUIREMENTS_ATTENDANCE'),
-            (string) $activity->getValue('rqa_attendance'), array('type' => 'number', 'minNumber' => 0, 'step' => 0.01));
+            (string) $activity->getValue('rqa_attendance'),
+            array('type' => 'number', 'minNumber' => 0, 'step' => 0.01, 'property' => $textProperty));
         $form->addInput('rqa_certificate_date', $gL10n->get('PLG_REQUIREMENTS_CERTIFICATE_DATE'),
             (string) $activity->getValue('rqa_certificate_date', 'database'),
-            array('type' => 'date', 'helpTextId' => 'PLG_REQUIREMENTS_CERTIFICATE_DATE_HELP'));
+            array('type' => 'date', 'property' => $textProperty,
+                'helpTextId' => 'PLG_REQUIREMENTS_CERTIFICATE_DATE_HELP'));
         $form->addInput('rqa_url', $gL10n->get('SYS_WEBSITE'), (string) $activity->getValue('rqa_url'),
-            array('maxLength' => 2000, 'type' => 'url'));
+            array('maxLength' => 2000, 'type' => 'url', 'property' => $textProperty));
         $form->addMultilineTextInput('rqa_location', $gL10n->get('PLG_REQUIREMENTS_LOCATION'),
-            (string) $activity->getValue('rqa_location'), 2);
+            (string) $activity->getValue('rqa_location'), 2, array('property' => $textProperty));
         $form->addMultilineTextInput('rqa_description', $gL10n->get('SYS_DESCRIPTION'),
-            (string) $activity->getValue('rqa_description'), 4);
+            (string) $activity->getValue('rqa_description'), 4, array('property' => $textProperty));
         $form->addMultilineTextInput('rqa_comments', $gL10n->get('SYS_COMMENT'),
-            (string) $activity->getValue('rqa_comments'), 3);
+            (string) $activity->getValue('rqa_comments'), 3, array('property' => $textProperty));
 
         // Credit inputs, one compact row per creditable requirement type. Rows for requirements that
         // currently apply to the member (or that already carry a credit) are shown; the rest are
@@ -432,7 +511,8 @@ class ActivityPresenter extends RequirementsPresenter
                 'withdrawn' => $gL10n->get('PLG_REQUIREMENTS_STATUS_WITHDRAWN')
             ), array(
                 'defaultValue' => (string) $activity->getValue('rqa_status') ?: 'submitted',
-                'showContextDependentFirstEntry' => false
+                'showContextDependentFirstEntry' => false,
+                'property' => $choiceProperty
             ));
             $form->addSelectBox('rqa_review_status', $gL10n->get('PLG_REQUIREMENTS_REVIEW_STATUS'), array(
                 '' => '',
@@ -441,13 +521,19 @@ class ActivityPresenter extends RequirementsPresenter
                 'partially_accepted' => $gL10n->get('PLG_REQUIREMENTS_REVIEW_PARTIALLY_ACCEPTED'),
                 'not_accepted' => $gL10n->get('PLG_REQUIREMENTS_REVIEW_NOT_ACCEPTED'),
                 'clarification' => $gL10n->get('PLG_REQUIREMENTS_REVIEW_CLARIFICATION')
-            ), array('defaultValue' => (string) $activity->getValue('rqa_review_status')));
+            ), array(
+                'defaultValue' => (string) $activity->getValue('rqa_review_status'),
+                'property' => $choiceProperty
+            ));
             $form->addMultilineTextInput('rqa_review_comments', $gL10n->get('PLG_REQUIREMENTS_REVIEW_COMMENTS'),
-                (string) $activity->getValue('rqa_review_comments'), 3);
+                (string) $activity->getValue('rqa_review_comments'), 3, array('property' => $textProperty));
         }
 
-        $form->addSubmitButton('adm_button_save', $gL10n->get('SYS_SAVE'), array('icon' => 'bi-check-lg'));
+        if (!$readOnly) {
+            $form->addSubmitButton('adm_button_save', $gL10n->get('SYS_SAVE'), array('icon' => 'bi-check-lg'));
+        }
 
+        $this->assignSmartyVariable('readOnly', $readOnly);
         $this->assignSmartyVariable('creditFields', $creditFields);
         $this->assignSmartyVariable('showReview', $isAdmin);
         $this->assignSmartyVariable('userCreatedName', $activity->getNameOfCreatingUser());

@@ -13,6 +13,9 @@
  */
 
 use Admidio\Changelog\Service\ChangelogService;
+use Admidio\Components\Entity\Component;
+use Admidio\Infrastructure\Plugins\PluginRegistry;
+use Admidio\Infrastructure\Utils\SecurityUtils;
 use AdmidioPlugin\Requirements\Entity\Activity;
 use AdmidioPlugin\Requirements\Entity\ActivityCredit;
 use AdmidioPlugin\Requirements\Entity\Provider;
@@ -58,6 +61,9 @@ ChangelogService::registerCallback('getFieldTranslations', '', array(
     'rac_credits_accepted' => 'PLG_REQUIREMENTS_CREDITS_ACCEPTED'
 ));
 
+// The changelog hands these callbacks nothing but the table name and reads the record by id or UUID
+// afterwards, so the organization check cannot live here. It lives in the entities themselves, which
+// scope every read to the current organization - see Entity\OrganizationScope.
 ChangelogService::registerCallback(
     'getObjectForTable',
     'req_providers',
@@ -99,8 +105,95 @@ ChangelogService::registerCallback(
     }
 );
 
+/*
+ * Where a changelog row points. Without this the record name in the change history is plain text,
+ * so an administrator reading "who changed what" has no way back to the thing that was changed.
+ *
+ * A rule and a credit have no page of their own - they are edited inside their requirement type and
+ * their activity - so they link to the page that owns them. The rule needs its requirement type
+ * looked up for that, which is why it is the one callback that reads.
+ */
+ChangelogService::registerCallback(
+    'createLink',
+    'req_providers',
+    static function (string $text, string $module, int|string $id, string $uuid = ''): string {
+        $plugin = PluginRegistry::get(RequirementsPlugin::ID);
+        return $plugin === null || $uuid === '' ? '' : SecurityUtils::encodeUrl(
+            $plugin->getUrl('providers.php'),
+            array('mode' => 'edit', 'uuid' => $uuid)
+        );
+    }
+);
+ChangelogService::registerCallback(
+    'createLink',
+    'req_activities',
+    static function (string $text, string $module, int|string $id, string $uuid = ''): string {
+        $plugin = PluginRegistry::get(RequirementsPlugin::ID);
+        return $plugin === null || $uuid === '' ? '' : SecurityUtils::encodeUrl(
+            $plugin->getUrl('index.php'),
+            array('mode' => 'edit', 'uuid' => $uuid)
+        );
+    }
+);
+ChangelogService::registerCallback(
+    'createLink',
+    'req_requirement_types',
+    static function (string $text, string $module, int|string $id, string $uuid = ''): string {
+        $plugin = PluginRegistry::get(RequirementsPlugin::ID);
+        return $plugin === null || $uuid === '' ? '' : SecurityUtils::encodeUrl(
+            $plugin->getUrl('rules.php'),
+            array('mode' => 'type-edit', 'uuid' => $uuid)
+        );
+    }
+);
+ChangelogService::registerCallback(
+    'createLink',
+    'req_requirement_role_rules',
+    static function (string $text, string $module, int|string $id, string $uuid = ''): string {
+        $plugin = PluginRegistry::get(RequirementsPlugin::ID);
+        return $plugin === null || $uuid === '' ? '' : SecurityUtils::encodeUrl(
+            $plugin->getUrl('rules.php'),
+            array('mode' => 'rule-edit', 'uuid' => $uuid)
+        );
+    }
+);
+ChangelogService::registerCallback(
+    'createLink',
+    'req_activity_credits',
+    static function (string $text, string $module, int|string $id, string $uuid = ''): string {
+        global $gDb;
+
+        // A credit is edited on its activity, so the link needs the activity the credit belongs to.
+        $credit = new ActivityCredit($gDb, (int) $id);
+        if ((int) $credit->getValue('rac_id') === 0) {
+            return '';
+        }
+        $activity = new Activity($gDb, (int) $credit->getValue('rac_activity_id'));
+        $plugin = PluginRegistry::get(RequirementsPlugin::ID);
+        if ($plugin === null || (int) $activity->getValue('rqa_id') === 0) {
+            return '';
+        }
+
+        return SecurityUtils::encodeUrl(
+            $plugin->getUrl('index.php'),
+            array('mode' => 'edit', 'uuid' => $activity->getValue('rqa_uuid'))
+        );
+    }
+);
+
+// The requirements right, not the generic organization-administrator flag: a site that delegates
+// requirements administration through the component right would otherwise be denied its own change
+// history, while an administrator who was never given that right would be granted it.
+//
+// Component::isAdministrable() always answers for the current user, so the callback only speaks for
+// the user it is asked about when that is the same person. Core already grants an organization
+// administrator every table before this callback is reached, so answering "no" here never takes
+// access away - it only adds it for the holder of the requirements right.
 ChangelogService::registerCallback('getPermittedTables', '', static function ($user): array {
-    if (!$user->isAdministrator()) {
+    global $gCurrentUser;
+
+    if ((int) $user->getValue('usr_id') !== (int) $gCurrentUser->getValue('usr_id')
+        || !Component::isAdministrable(RequirementsPlugin::ID)) {
         return array();
     }
 

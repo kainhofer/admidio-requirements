@@ -1,0 +1,483 @@
+<?php
+namespace AdmidioPlugin\Requirements\Tests\Cli;
+
+use Admidio\Infrastructure\Exception;
+use AdmidioPlugin\Requirements\Cli\RequirementsCli;
+use AdmidioPlugin\Requirements\Database\RequirementsTables;
+use AdmidioPlugin\Requirements\Entity\Activity;
+use AdmidioPlugin\Requirements\Entity\RequirementRoleRule;
+use AdmidioPlugin\Requirements\Entity\RequirementType;
+use AdmidioPlugin\Requirements\RequirementsPlugin;
+use AdmidioPlugin\Requirements\Service\ActivityService;
+use AdmidioPlugin\Requirements\Service\RequirementTypeService;
+use AdmidioPlugin\Requirements\Tests\Support\RequirementsDatabaseTestCase;
+use InvalidArgumentException;
+
+require_once dirname(__DIR__) . '/Support/RequirementsDatabaseTestCase.php';
+
+/**
+ * The CLI callbacks against a real database (§13).
+ *
+ * The commands are invoked the way `CliApplication` invokes them - arguments and options as plain
+ * arrays - so the test covers the callback and the services under it without a subprocess. What a
+ * subprocess would add is the bootstrap and the argument parser, and both are covered by the core
+ * CLI suite; what matters here is that each command writes what it claims to and refuses what it
+ * should.
+ */
+final class RequirementsCliTest extends RequirementsDatabaseTestCase
+{
+    /**
+     * Run a command and return the rows it printed as JSON.
+     *
+     * @param array<int,string> $arguments
+     * @param array<string,mixed> $options
+     * @return array<int,array<string,mixed>>
+     */
+    private function runCommand(string $method, array $arguments = array(), array $options = array()): array
+    {
+        $options = array_merge(array('format' => 'json', 'yes' => true), $options);
+
+        ob_start();
+        try {
+            $exit = RequirementsCli::$method($arguments, $options);
+        } finally {
+            $output = ob_get_clean();
+        }
+
+        $this->assertSame(0, $exit, $method . ' should report success.');
+
+        $decoded = json_decode(trim($output), true);
+        $this->assertIsArray($decoded, $method . ' should print JSON, got: ' . $output);
+
+        return $decoded;
+    }
+
+    // ---------------------------------------------------------------- list commands
+
+    /**
+     * The list commands print the numeric id, which is what the update and delete commands take.
+     * A UUID column would be unreadable in a terminal and is deliberately not there.
+     */
+    public function testProviderListPrintsTheIdAndNotTheUuid(): void
+    {
+        $this->runCommand('providerAdd', array('Institute'), array('short-name' => 'INS'));
+
+        $rows = $this->runCommand('providerList');
+
+        $this->assertNotSame(array(), $rows);
+        $this->assertArrayHasKey('id', $rows[0]);
+        $this->assertArrayNotHasKey('uuid', $rows[0]);
+        $this->assertSame('Institute', $rows[0]['name']);
+    }
+
+    public function testRequirementListPrintsTheIdAndNotTheUuid(): void
+    {
+        $this->runCommand('requirementAdd', array('CPD'), array('period-unit' => 'year', 'short-name' => 'CPD'));
+
+        $rows = $this->runCommand('requirementList');
+
+        $this->assertArrayHasKey('id', $rows[0]);
+        $this->assertArrayNotHasKey('uuid', $rows[0]);
+    }
+
+    public function testRuleListShowsTheRuleWithItsRoleAndValidity(): void
+    {
+        global $gCurrentOrgId;
+
+        $type = $this->createRequirementType('Rules');
+        $role = $this->fixture->createAndSaveRole('CLI rule role', (int) $gCurrentOrgId);
+        $this->runCommand(
+            'ruleAdd',
+            array((string) $type->getValue('rqt_id'), (string) $role['rol_id'], '12'),
+            array('valid-from' => '2026-01-01')
+        );
+
+        $rows = $this->runCommand('ruleList');
+
+        $this->assertCount(1, $rows);
+        $this->assertArrayHasKey('id', $rows[0]);
+        $this->assertArrayNotHasKey('uuid', $rows[0]);
+        $this->assertSame('CLI rule role', $rows[0]['role']);
+        $this->assertSame('2026-01-01', $rows[0]['valid_from']);
+    }
+
+    public function testActivityListShowsTheActivitiesOfTheOrganisation(): void
+    {
+        $this->runCommand('activityAdd', array('First course'), array('begin' => '2026-03-01'));
+        $this->runCommand('activityAdd', array('Second course'), array('begin' => '2026-04-01'));
+
+        $rows = $this->runCommand('activityList');
+
+        $titles = array_column($rows, 'title');
+        $this->assertContains('First course', $titles);
+        $this->assertContains('Second course', $titles);
+        $this->assertArrayNotHasKey('uuid', $rows[0]);
+    }
+
+    public function testActivityListCanShowTheCreditsOfOneRequirement(): void
+    {
+        $type = $this->createRequirementType('Credited');
+        $activity = $this->runCommand('activityAdd', array('Credited course'), array('begin' => '2026-03-01'));
+        $this->runCommand('creditSet', array(
+            $activity[0]['uuid'], (string) $type->getValue('rqt_id'), '2026-05-01', '7.5'
+        ));
+
+        $rows = $this->runCommand('activityList', array(), array('requirement' => (string) $type->getValue('rqt_id')));
+
+        $this->assertSame('2026-01-01', $rows[0]['credited_period']);
+        $this->assertSame(7.5, (float) $rows[0]['claimed']);
+    }
+
+    public function testActivityListNarrowsToOneMember(): void
+    {
+        $member = $this->createMember('cli_list_member');
+        $this->runCommand('activityAdd', array('Theirs'), array('begin' => '2026-03-01', 'user' => (string) $member['usr_id']));
+        $this->runCommand('activityAdd', array('Mine'), array('begin' => '2026-03-01'));
+
+        $rows = $this->runCommand('activityList', array(), array('user' => (string) $member['usr_id']));
+
+        $this->assertSame(array('Theirs'), array_column($rows, 'title'));
+    }
+
+    // ---------------------------------------------------------------- mutations and dry runs
+
+    public function testProviderAddWritesTheProvider(): void
+    {
+        $rows = $this->runCommand('providerAdd', array('Academy'), array('short-name' => 'ACA', 'qualified' => 'true'));
+
+        $this->assertSame('Academy', $rows[0]['name']);
+        $this->assertTrue($rows[0]['qualified']);
+        $this->assertSame(1, $this->countRows(RequirementsTables::providers()));
+    }
+
+    /**
+     * §13: every mutation can be rehearsed, and a rehearsal leaves nothing behind.
+     */
+    public function testADryRunProviderAddWritesNothing(): void
+    {
+        $rows = $this->runCommand('providerAdd', array('Never saved'), array('dry-run' => true));
+
+        $this->assertTrue($rows[0]['dry_run']);
+        $this->assertSame(0, $this->countRows(RequirementsTables::providers()));
+    }
+
+    /**
+     * A dry run has to leave a record it was told to delete.
+     *
+     * This one runs outside the per-test transaction. `Database::rollback()` unwinds everything that
+     * is open rather than only the innermost level, so the rehearsal inside `mutate()` would take
+     * the test's own transaction - and with it the record created a line earlier - down with it.
+     * On the command line there is no outer transaction, so this is the production shape.
+     */
+    public function testADryRunDeleteLeavesTheRecord(): void
+    {
+        $this->outsideTheTestTransaction(function (): void {
+            $added = $this->runCommand('providerAdd', array('Kept'));
+
+            $this->runCommand('providerDelete', array($added[0]['uuid']), array('dry-run' => true));
+
+            $this->assertSame(1, $this->countRows(RequirementsTables::providers()));
+        });
+    }
+
+    public function testProviderDeleteRemovesTheProvider(): void
+    {
+        $added = $this->runCommand('providerAdd', array('Doomed'));
+
+        $rows = $this->runCommand('providerDelete', array($added[0]['uuid']));
+
+        $this->assertTrue($rows[0]['deleted']);
+        $this->assertSame(0, $this->countRows(RequirementsTables::providers()));
+    }
+
+    public function testRequirementDeleteRemovesTheTypeAndItsRules(): void
+    {
+        global $gCurrentOrgId;
+
+        $type = $this->createRequirementType('Doomed requirement');
+        $role = $this->fixture->createAndSaveRole('Doomed rule role', (int) $gCurrentOrgId);
+        $this->runCommand('ruleAdd', array((string) $type->getValue('rqt_id'), (string) $role['rol_id'], '5'));
+        $this->assertSame(1, $this->countRows(RequirementsTables::requirementRoleRules()));
+
+        $this->runCommand('requirementDelete', array((string) $type->getValue('rqt_id')));
+
+        $this->assertSame(0, $this->countRows(RequirementsTables::requirementTypes()));
+        $this->assertSame(0, $this->countRows(RequirementsTables::requirementRoleRules()));
+    }
+
+    /**
+     * Finding 4.9: a type that still has credits is refused with a sentence, not a driver error.
+     */
+    public function testRequirementDeleteRefusesATypeThatStillHasCredits(): void
+    {
+        global $gL10n;
+
+        $type = $this->createRequirementType('Has credits');
+        $activity = $this->runCommand('activityAdd', array('Contributing'), array('begin' => '2026-03-01'));
+        $this->runCommand('creditSet', array($activity[0]['uuid'], (string) $type->getValue('rqt_id'), '2026-01-01', '3'));
+
+        try {
+            $this->runCommand('requirementDelete', array((string) $type->getValue('rqt_id')));
+            $this->fail('A requirement type with credits should not be deletable.');
+        } catch (Exception $exception) {
+            $this->assertSame(
+                $gL10n->get('PLG_REQUIREMENTS_REQUIREMENT_HAS_CREDITS', array(1)),
+                $exception->getMessage()
+            );
+        }
+
+        $this->assertSame(1, $this->countRows(RequirementsTables::requirementTypes()));
+    }
+
+    public function testRuleDeleteRemovesOneRule(): void
+    {
+        global $gCurrentOrgId;
+
+        $type = $this->createRequirementType('Rule delete');
+        $role = $this->fixture->createAndSaveRole('Rule delete role', (int) $gCurrentOrgId);
+        $added = $this->runCommand('ruleAdd', array((string) $type->getValue('rqt_id'), (string) $role['rol_id'], '5'));
+
+        $this->runCommand('ruleDelete', array($added[0]['uuid']));
+
+        $this->assertSame(0, $this->countRows(RequirementsTables::requirementRoleRules()));
+    }
+
+    public function testCreditSetThenCreditDelete(): void
+    {
+        $type = $this->createRequirementType('Credit lifecycle');
+        $activity = $this->runCommand('activityAdd', array('Course'), array('begin' => '2026-03-01'));
+
+        $credit = $this->runCommand('creditSet', array(
+            $activity[0]['uuid'], (string) $type->getValue('rqt_id'), '2026-05-01', '4'
+        ));
+        $this->assertSame('2026-01-01', $credit[0]['period_reference'], 'The period is normalised.');
+        $this->assertSame(1, $this->countRows(RequirementsTables::activityCredits()));
+
+        $this->runCommand('creditDelete', array(
+            $activity[0]['uuid'], (string) $type->getValue('rqt_id'), '2026-08-01'
+        ));
+
+        $this->assertSame(0, $this->countRows(RequirementsTables::activityCredits()));
+    }
+
+    public function testCreditDeleteReportsAPeriodThatHasNoCredit(): void
+    {
+        $type = $this->createRequirementType('No credit');
+        $activity = $this->runCommand('activityAdd', array('Course'), array('begin' => '2026-03-01'));
+
+        $this->expectException(InvalidArgumentException::class);
+
+        $this->runCommand('creditDelete', array(
+            $activity[0]['uuid'], (string) $type->getValue('rqt_id'), '2020-01-01'
+        ));
+    }
+
+    /**
+     * Finding 2.1: the CLI half of the `until_submitted` workflow.
+     */
+    public function testActivitySubmitMovesADraftOn(): void
+    {
+        $this->enablePluginForCurrentOrganization(array(
+            RequirementsPlugin::SETTING_ACTIVITY_OWNER_EDIT_POLICY => RequirementsPlugin::EDIT_POLICY_UNTIL_SUBMITTED
+        ));
+
+        $added = $this->runCommand('activityAdd', array('Draft course'), array('begin' => '2026-03-01'));
+        $this->assertSame('draft', $added[0]['status']);
+
+        $rows = $this->runCommand('activitySubmit', array($added[0]['uuid']));
+
+        $this->assertSame('submitted', $rows[0]['status']);
+    }
+
+    /** @see testADryRunDeleteLeavesTheRecord for why this runs outside the test transaction. */
+    public function testADryRunSubmitLeavesTheDraftAlone(): void
+    {
+        $this->enablePluginForCurrentOrganization(array(
+            RequirementsPlugin::SETTING_ACTIVITY_OWNER_EDIT_POLICY => RequirementsPlugin::EDIT_POLICY_UNTIL_SUBMITTED
+        ));
+
+        $this->outsideTheTestTransaction(function (): void {
+            $added = $this->runCommand('activityAdd', array('Still a draft'), array('begin' => '2026-03-01'));
+            $this->runCommand('activitySubmit', array($added[0]['uuid']), array('dry-run' => true));
+
+            $this->assertSame(
+                'draft',
+                (string) $this->reloadActivity($added[0]['uuid'])->getValue('rqa_status')
+            );
+        });
+    }
+
+    public function testActivityDeleteTakesItsCreditsWithIt(): void
+    {
+        $type = $this->createRequirementType('Cascade');
+        $activity = $this->runCommand('activityAdd', array('Doomed course'), array('begin' => '2026-03-01'));
+        $this->runCommand('creditSet', array($activity[0]['uuid'], (string) $type->getValue('rqt_id'), '2026-01-01', '3'));
+
+        $this->runCommand('activityDelete', array($activity[0]['uuid']));
+
+        $this->assertSame(0, $this->countRows(RequirementsTables::activities()));
+        $this->assertSame(0, $this->countRows(RequirementsTables::activityCredits()));
+    }
+
+    // ---------------------------------------------------------------- authorization
+
+    /**
+     * §13: `--user` is restricted to the actor unless they administer the component.
+     */
+    public function testReportRefusesAnotherUserForANonAdministrator(): void
+    {
+        $member = $this->createMember('cli_report_member');
+        $other = $this->createMember('cli_report_other');
+
+        $this->expectException(Exception::class);
+
+        $this->asMember($member['usr_id'], function () use ($other): void {
+            $this->runCommand('report', array(), array('user' => (string) $other['usr_id']));
+        });
+    }
+
+    public function testActivityListRefusesAnotherUserForANonAdministrator(): void
+    {
+        $member = $this->createMember('cli_activities_member');
+        $other = $this->createMember('cli_activities_other');
+
+        $this->expectException(Exception::class);
+
+        $this->asMember($member['usr_id'], function () use ($other): void {
+            $this->runCommand('activityList', array(), array('user' => (string) $other['usr_id']));
+        });
+    }
+
+    public function testAMemberMayReportOnThemselves(): void
+    {
+        $member = $this->createMember('cli_report_self');
+        $type = $this->createRequirementType('Self report');
+        $this->addRule($type, $member['rol_id'], 10.0);
+
+        $rows = $this->asMember($member['usr_id'], fn(): array => $this->runCommand('report'));
+
+        $this->assertNotSame(array(), $rows);
+        $this->assertSame('Self report', $rows[0]['requirement']);
+        $this->assertSame(10.0, (float) $rows[0]['required']);
+    }
+
+    /**
+     * §13: `--details` adds the contributing activities under each requirement.
+     */
+    public function testReportDetailsListTheContributingActivities(): void
+    {
+        $member = $this->createMember('cli_report_details');
+        $type = $this->createRequirementType('Detailed');
+        $this->addRule($type, $member['rol_id'], 10.0);
+
+        $activity = $this->runCommand(
+            'activityAdd',
+            array('Counted course'),
+            array('begin' => '2026-03-01', 'user' => (string) $member['usr_id'])
+        );
+        $this->runCommand('creditSet', array($activity[0]['uuid'], (string) $type->getValue('rqt_id'), '2026-01-01', '4'));
+
+        $summary = $this->runCommand('report', array(), array('user' => (string) $member['usr_id']));
+        $detailed = $this->runCommand('report', array(), array('user' => (string) $member['usr_id'], 'details' => true));
+
+        $this->assertCount(1, $summary);
+        $this->assertCount(2, $detailed);
+        $this->assertSame('activity', $detailed[1]['status']);
+        $this->assertStringContainsString('Counted course', (string) $detailed[1]['requirement']);
+    }
+
+    /**
+     * A record of another organisation is not addressable, whatever reference is typed.
+     */
+    public function testACommandCannotReachAnotherOrganisationsRecord(): void
+    {
+        $db = $this->getDatabase();
+        $otherOrgId = (int) $this->fixture->createAndSaveOrganization('CLI Other', 'CLIOTH')['org_id'];
+
+        $db->queryPrepared(
+            'INSERT INTO ' . RequirementsTables::providers()
+            . ' (rqp_uuid, rqp_org_id, rqp_name) VALUES (?, ?, ?)',
+            array('dddddddd-0000-0000-0000-000000000001', $otherOrgId, 'Elsewhere')
+        );
+
+        $this->expectException(InvalidArgumentException::class);
+
+        $this->runCommand('providerUpdate', array('dddddddd-0000-0000-0000-000000000001'), array('name' => 'Renamed'));
+    }
+
+    public function testAnUnknownReferenceIsReportedAsNotFound(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+
+        $this->runCommand('providerUpdate', array('99999999'), array('name' => 'Nothing here'));
+    }
+
+    // ---------------------------------------------------------------- helpers
+
+    /**
+     * Run a callback with the per-test transaction closed, then put the plugin tables back as they
+     * were and reopen it so tearDown() finds what it expects.
+     *
+     * Only a test that exercises `--dry-run` needs this, and only because a rollback is what it is
+     * testing. Everything the callback writes is committed, so the plugin tables are emptied
+     * afterwards - they are this plugin's own and every test starts from an empty set anyway.
+     */
+    private function outsideTheTestTransaction(callable $callback): void
+    {
+        $db = $this->getDatabase();
+        $db->endTransaction();
+
+        try {
+            $callback();
+        } finally {
+            foreach (array(
+                RequirementsTables::activityCredits(),
+                RequirementsTables::requirementRoleRules(),
+                RequirementsTables::activities(),
+                RequirementsTables::requirementTypes(),
+                RequirementsTables::providers()
+            ) as $table) {
+                $db->queryPrepared('DELETE FROM ' . $table, array(), false);
+            }
+            $db->startTransaction();
+        }
+    }
+
+    private function countRows(string $table): int
+    {
+        return (int) $this->getDatabase()->queryPrepared('SELECT COUNT(*) FROM ' . $table)->fetchColumn();
+    }
+
+    private function reloadActivity(string $uuid): Activity
+    {
+        $activity = new Activity($this->getDatabase());
+        $activity->readDataByUuid($uuid);
+
+        return $activity;
+    }
+
+    private function createRequirementType(string $name): RequirementType
+    {
+        $type = new RequirementType($this->getDatabase());
+        (new RequirementTypeService($this->getDatabase()))->saveType($type, array(
+            'rqt_name' => $name,
+            'rqt_period_unit' => 'year',
+            'rqt_period_anchor' => 'calendar'
+        ));
+
+        return $type;
+    }
+
+    private function addRule(RequirementType $type, int $roleId, float $credits): void
+    {
+        (new RequirementTypeService($this->getDatabase()))->saveRule(
+            new RequirementRoleRule($this->getDatabase()),
+            $type,
+            array(
+                'rrr_role_id' => $roleId,
+                'rrr_required_credits' => $credits,
+                'rrr_partial_period_mode' => 'full'
+            )
+        );
+    }
+}
