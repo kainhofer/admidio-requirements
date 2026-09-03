@@ -52,6 +52,18 @@ abstract class RequirementsPresenter extends PagePresenter
         ChangelogService::displayHistoryButton($this, 'requirements_' . $area, $tables, true, $parameters);
     }
 
+    /**
+     * A credit amount as it should be read: two decimals at most, and no trailing zeros, so that
+     * 7.50 reads as 7.5 and 8.00 as 8. An unset value stays an empty cell rather than becoming 0.
+     */
+    protected static function formatCredits(mixed $value): string
+    {
+        if ($value === null || $value === '') {
+            return '';
+        }
+        return rtrim(rtrim(number_format((float) $value, 2, '.', ''), '0'), '.');
+    }
+
     protected function isAdmin(): bool
     {
         return Component::isAdministrable(RequirementsPlugin::ID);

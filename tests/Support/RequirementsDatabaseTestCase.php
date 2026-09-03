@@ -8,7 +8,13 @@ use Admidio\Tests\Support\AdmidioTestFixture;
 use Admidio\Tests\Support\PermissionContext;
 use Admidio\Users\Entity\User;
 use AdmidioPlugin\Requirements\Database\RequirementsTables;
+use AdmidioPlugin\Requirements\Entity\Activity;
+use AdmidioPlugin\Requirements\Entity\ActivityCredit;
+use AdmidioPlugin\Requirements\Entity\RequirementRoleRule;
+use AdmidioPlugin\Requirements\Entity\RequirementType;
 use AdmidioPlugin\Requirements\RequirementsPlugin;
+use AdmidioPlugin\Requirements\Service\ActivityService;
+use AdmidioPlugin\Requirements\Service\RequirementTypeService;
 
 /**
  * Base class for the requirements integration tests.
@@ -171,6 +177,36 @@ abstract class RequirementsDatabaseTestCase extends AdministratorTestCase
     }
 
     /**
+     * Run a callback outside the transaction each test is wrapped in, and clear the plugin tables
+     * afterwards.
+     *
+     * `Database::rollback()` unwinds every open transaction, not just the innermost one, so any code
+     * under test that rolls back on purpose - a `--dry-run` command, or a service refusing halfway
+     * through a batch - would take the test transaction with it and leave the fixtures gone rather
+     * than the write undone. Such a test has to own its own cleanup instead.
+     */
+    protected function outsideTheTestTransaction(callable $callback): void
+    {
+        $db = $this->getDatabase();
+        $db->endTransaction();
+
+        try {
+            $callback();
+        } finally {
+            foreach (array(
+                RequirementsTables::activityCredits(),
+                RequirementsTables::requirementRoleRules(),
+                RequirementsTables::activities(),
+                RequirementsTables::requirementTypes(),
+                RequirementsTables::providers()
+            ) as $table) {
+                $db->queryPrepared('DELETE FROM ' . $table, array(), false);
+            }
+            $db->startTransaction();
+        }
+    }
+
+    /**
      * Run a callback as a member who is not an administrator, in the current organization.
      *
      * @return mixed the return value of the callback
@@ -182,6 +218,88 @@ abstract class RequirementsDatabaseTestCase extends AdministratorTestCase
         $user = new User($this->getDatabase(), $gProfileFields, $userId);
 
         return $this->withCurrentUser($user, (int) $gCurrentOrgId, true, $callback);
+    }
+
+    /**
+     * A requirement type with one role rule: a yearly calendar requirement unless $typeValues says
+     * otherwise, which is what most of the tests want and none of them should have to spell out.
+     *
+     * @param array<string,mixed> $ruleValues
+     * @param array<string,mixed> $typeValues
+     */
+    protected function createRequirement(
+        string $name,
+        int $roleId,
+        float $credits,
+        array $ruleValues = array(),
+        array $typeValues = array()
+    ): RequirementType {
+        static $counter = 0;
+        ++$counter;
+
+        $service = new RequirementTypeService($this->getDatabase());
+        $type = new RequirementType($this->getDatabase());
+        $service->saveType($type, array_merge(array(
+            'rqt_name' => $name . ' ' . $counter,
+            'rqt_short_name' => strtoupper(substr($name, 0, 3)) . $counter,
+            'rqt_period_unit' => 'year',
+            'rqt_period_anchor' => 'calendar'
+        ), $typeValues));
+
+        $service->saveRule(new RequirementRoleRule($this->getDatabase()), $type, array_merge(array(
+            'rrr_role_id' => $roleId,
+            'rrr_required_credits' => $credits,
+            'rrr_partial_period_mode' => 'pro_rata',
+            'rrr_proration_basis' => 'month'
+        ), $ruleValues));
+
+        return $type;
+    }
+
+    protected function createCreditedActivity(
+        int $userId,
+        RequirementType $type,
+        string $beginDate,
+        float $claimed,
+        ?float $accepted = null,
+        ?string $periodReference = null
+    ): Activity {
+        $service = new ActivityService($this->getDatabase());
+        $activity = new Activity($this->getDatabase());
+        $service->save($activity, array(
+            'rqa_title' => 'Course on ' . $beginDate,
+            'rqa_begin_date' => $beginDate
+        ), $userId);
+
+        $service->saveCredit(
+            new ActivityCredit($this->getDatabase()),
+            $activity,
+            $type,
+            $periodReference ?? $beginDate,
+            $claimed,
+            $accepted
+        );
+
+        return $activity;
+    }
+
+    /**
+     * @return array{usr_id:int,rol_id:int}
+     */
+    protected function createMemberJoining(string $login, string $joinDate): array
+    {
+        global $gCurrentOrgId;
+
+        $user = $this->fixture->createAndSaveUser($login, $login . '@example.local', (int) $gCurrentOrgId);
+        $role = $this->fixture->createAndSaveRole('Role ' . $login, (int) $gCurrentOrgId);
+        $this->fixture->assignUserToRolePeriod(
+            (int) $user['usr_id'],
+            (int) $role['rol_id'],
+            $joinDate,
+            '9999-12-31'
+        );
+
+        return array('usr_id' => (int) $user['usr_id'], 'rol_id' => (int) $role['rol_id']);
     }
 
     /**

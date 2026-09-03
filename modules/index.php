@@ -10,6 +10,7 @@
  * query       : free-text filter for the activity list
  * requirement : UUID of the requirement type whose credits the list shows
  * period      : credited period the list is narrowed to, for one bar of the overview
+ * user        : UUID of the member the list is narrowed to; administrators only
  *
  * @copyright The Admidio Team
  * @see https://www.admidio.org/
@@ -40,11 +41,12 @@ try {
     $getQuery = admFuncVariableIsValid($_GET, 'query', 'string');
     $getRequirement = admFuncVariableIsValid($_GET, 'requirement', 'uuid');
     $getPeriod = admFuncVariableIsValid($_GET, 'period', 'date');
+    $getUser = admFuncVariableIsValid($_GET, 'user', 'uuid');
 
     switch ($getMode) {
         case 'list':
             $page = new ActivityPresenter();
-            $page->createList($getQuery, $getRequirement, $getPeriod);
+            $page->createList($getQuery, $getRequirement, $getPeriod, $getUser);
             $gNavigation->addStartUrl(CURRENT_URL, $page->getHeadline(), 'bi-clipboard-check');
             $page->show();
             break;

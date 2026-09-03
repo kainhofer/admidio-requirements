@@ -387,6 +387,66 @@ final class RequirementsCliTest extends RequirementsDatabaseTestCase
     }
 
     /**
+     * §13: `--requirement` turns the report around - one requirement across the members it concerns,
+     * which is the roster the web review view shows.
+     */
+    public function testReportWithARequirementListsEveryMemberItConcerns(): void
+    {
+        $member = $this->createMember('cli_roster_member');
+        $type = $this->createRequirementType('Roster');
+        $this->addRule($type, $member['rol_id'], 10.0);
+
+        $activity = $this->runCommand(
+            'activityAdd',
+            array('Roster course'),
+            array('begin' => '2026-03-01', 'user' => (string) $member['usr_id'])
+        );
+        $this->runCommand('creditSet', array($activity[0]['uuid'], (string) $type->getValue('rqt_id'), '2026-01-01', '4'));
+
+        $rows = $this->runCommand('report', array(), array(
+            'requirement' => (string) $type->getValue('rqt_id'),
+            'period' => '2026-06-01'
+        ));
+
+        $this->assertCount(1, $rows);
+        $this->assertSame(4.0, (float) $rows[0]['attained']);
+        $this->assertSame(10.0, (float) $rows[0]['required']);
+        $this->assertSame('missing', $rows[0]['status']);
+        // The first column names the member here, where the per-member report names the requirement.
+        $this->assertArrayHasKey('member', $rows[0]);
+    }
+
+    public function testTheRosterStatusOptionNarrowsTheReport(): void
+    {
+        $member = $this->createMember('cli_roster_status');
+        $type = $this->createRequirementType('Roster status');
+        $this->addRule($type, $member['rol_id'], 10.0);
+
+        $options = array('requirement' => (string) $type->getValue('rqt_id'), 'period' => '2026-06-01');
+
+        $this->assertCount(1, $this->runCommand('report', array(), $options + array('status' => 'missing')));
+        $this->assertSame(array(), $this->runCommand('report', array(), $options + array('status' => 'fulfilled')));
+    }
+
+    /**
+     * The roster is administrative: a normal member asking for one is refused rather than quietly
+     * handed their own row.
+     */
+    public function testANonAdministratorCannotAskForARoster(): void
+    {
+        $member = $this->createMember('cli_roster_rights');
+        $type = $this->createRequirementType('Roster rights');
+        $this->addRule($type, $member['rol_id'], 10.0);
+        $typeId = (string) $type->getValue('rqt_id');
+
+        $this->expectException(Exception::class);
+
+        $this->asMember($member['usr_id'], function () use ($typeId): void {
+            $this->runCommand('report', array(), array('requirement' => $typeId));
+        });
+    }
+
+    /**
      * A record of another organisation is not addressable, whatever reference is typed.
      */
     public function testACommandCannotReachAnotherOrganisationsRecord(): void
@@ -422,27 +482,6 @@ final class RequirementsCliTest extends RequirementsDatabaseTestCase
      * testing. Everything the callback writes is committed, so the plugin tables are emptied
      * afterwards - they are this plugin's own and every test starts from an empty set anyway.
      */
-    private function outsideTheTestTransaction(callable $callback): void
-    {
-        $db = $this->getDatabase();
-        $db->endTransaction();
-
-        try {
-            $callback();
-        } finally {
-            foreach (array(
-                RequirementsTables::activityCredits(),
-                RequirementsTables::requirementRoleRules(),
-                RequirementsTables::activities(),
-                RequirementsTables::requirementTypes(),
-                RequirementsTables::providers()
-            ) as $table) {
-                $db->queryPrepared('DELETE FROM ' . $table, array(), false);
-            }
-            $db->startTransaction();
-        }
-    }
-
     private function countRows(string $table): int
     {
         return (int) $this->getDatabase()->queryPrepared('SELECT COUNT(*) FROM ' . $table)->fetchColumn();

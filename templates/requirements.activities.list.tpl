@@ -70,6 +70,7 @@
     <div class="card-body">
         <form method="get" action="{$searchUrl}" class="row g-2 align-items-end">
             <input type="hidden" name="mode" value="list">
+            {if $userUuid}<input type="hidden" name="user" value="{$userUuid}">{/if}
             <div class="col-sm">
                 <label class="form-label small mb-1">{$l10n->get('PLG_REQUIREMENTS_REQUIREMENT_TYPE')}</label>
                 <select name="requirement" class="form-select" onchange="this.form.submit()">
@@ -89,11 +90,12 @@
     </div>
 </div>
 
-{if $periodLabel}
+{if $periodLabel or $userLabel}
     <div class="alert alert-secondary d-flex justify-content-between align-items-center" role="alert">
         <span><i class="bi bi-funnel-fill"></i>
-            {$l10n->get('PLG_REQUIREMENTS_CONTRIBUTIONS_TO', [$periodLabel])}</span>
-        <a href="{$clearPeriodUrl}" class="btn btn-sm btn-outline-secondary">
+            {if $userLabel}{$l10n->get('PLG_REQUIREMENTS_CONTRIBUTIONS_OF', [$userLabel])} {/if}
+            {if $periodLabel}{$l10n->get('PLG_REQUIREMENTS_CONTRIBUTIONS_TO', [$periodLabel])}{/if}</span>
+        <a href="{$clearFilterUrl}" class="btn btn-sm btn-outline-secondary">
             {$l10n->get('PLG_REQUIREMENTS_SHOW_ALL')}</a>
     </div>
 {/if}

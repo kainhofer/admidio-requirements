@@ -344,6 +344,35 @@ final class ActivityService
     }
 
     /**
+     * Whether an activity list may name this member: somebody of this organization, or somebody who
+     * has left it but still has an activity here - the population the review view covers (§10.3).
+     *
+     * The list itself is scoped by `rqa_org_id` and would come back empty for anybody else, but the
+     * page also prints the member's name beside it, and a name from another organization is exactly
+     * what §7.6 says must not leak.
+     *
+     * @throws Exception
+     */
+    public function isKnownMember(int $userId): bool
+    {
+        global $gCurrentOrgId;
+
+        $user = new User($this->db, null, $userId);
+        $user->setOrganization((int) $gCurrentOrgId);
+        if ((int) $user->getValue('usr_id') !== 0 && $user->isMemberOfOrganization()) {
+            return true;
+        }
+
+        return (int) $this->db->queryPrepared(
+            'SELECT COUNT(*)
+               FROM ' . RequirementsTables::activities() . '
+              WHERE rqa_org_id = ?
+                AND rqa_user_id = ?',
+            array((int) $gCurrentOrgId, $userId)
+        )->fetchColumn() > 0;
+    }
+
+    /**
      * The credit rows of one activity, keyed by requirement type id.
      *
      * @return array<int,array<string,mixed>>
@@ -401,6 +430,64 @@ final class ActivityService
             $claimed ?? 0.0,
             $accepted
         );
+    }
+
+    /**
+     * Set the accepted credits of several contributions at once - the write half of the review view.
+     *
+     * §14 restricts accepted-credit writes to administrators, and the rows go through saveCredit(),
+     * so the record checks, the normalisation and the changelog entry are the ones the activity form
+     * already produces. What this adds is the transaction around the loop: a review pass is one
+     * decision about a period, and half of it landing is worse than none of it.
+     *
+     * A value that already stands is skipped rather than rewritten, so an untouched row produces no
+     * changelog entry and the returned count says what the pass actually changed.
+     *
+     * @param array<int,float|null> $accepted credit id => accepted credits, null clears the acceptance
+     * @return int how many rows changed
+     * @throws Exception
+     */
+    public function acceptCredits(array $accepted): int
+    {
+        if (!RequirementsPlugin::isUsableByCurrentUser()
+            || !Component::isAdministrable(RequirementsPlugin::ID)) {
+            throw new Exception('SYS_NO_RIGHTS');
+        }
+
+        $changed = 0;
+        $this->db->startTransaction();
+        try {
+            foreach ($accepted as $creditId => $value) {
+                // OrganizationScope answers a credit of another organization with an empty record.
+                $credit = new ActivityCredit($this->db, (int) $creditId);
+                if ((int) $credit->getValue('rac_id') === 0) {
+                    throw new Exception('SYS_NO_RIGHTS');
+                }
+
+                $stored = $credit->getValue('rac_credits_accepted', 'database');
+                // An unset decimal column reads as '' until the record has been read back.
+                $stored = ($stored === null || $stored === '') ? null : (float) $stored;
+                if ($stored === $value) {
+                    continue;
+                }
+
+                $this->saveCredit(
+                    $credit,
+                    new Activity($this->db, (int) $credit->getValue('rac_activity_id')),
+                    new RequirementType($this->db, (int) $credit->getValue('rac_requirement_type_id')),
+                    (string) $credit->getValue('rac_period_reference', 'database'),
+                    (float) $credit->getValue('rac_credits_claimed', 'database'),
+                    $value
+                );
+                ++$changed;
+            }
+            $this->db->endTransaction();
+        } catch (Throwable $exception) {
+            $this->db->rollback();
+            throw $exception;
+        }
+
+        return $changed;
     }
 
     /**

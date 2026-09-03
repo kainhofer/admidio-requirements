@@ -352,10 +352,16 @@ CliTaskRegistry::register(
     RequirementsPlugin::ID,
     array(RequirementsCli::class, 'report'),
     'Report requirement coverage for a period, optionally including contributing activities.',
-    'requirements:report [--user=USER] [--period=YYYY-MM-DD] [--details] [--format=FORMAT]',
+    'requirements:report [--user=USER | --requirement=REQUIREMENT [--status=STATUS]] '
+        . '[--period=YYYY-MM-DD] [--details] [--format=FORMAT]',
     array(),
     array(
         $opt('user', 'Target user UUID, id or login. Non-administrators may only select themselves.', 'USER'),
+        $opt('requirement', 'Report one requirement across every member it concerns, instead of one '
+            . 'member across their requirements. Administrators only.', 'REQUIREMENT'),
+        $opt('status', 'With --requirement, keep only members with this coverage status.', 'STATUS',
+            false, false, false, array('missing', 'fulfilled', 'overdue', 'never-fulfilled',
+                'no-credits-required', 'additional-credits', 'none')),
         $opt('period', 'Date identifying the requested requirement period.', 'YYYY-MM-DD'),
         $opt('details', 'Include contributing activity rows.', '', false, false, true),
         $format

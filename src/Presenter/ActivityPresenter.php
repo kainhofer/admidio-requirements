@@ -4,6 +4,7 @@ namespace AdmidioPlugin\Requirements\Presenter;
 use Admidio\Infrastructure\Exception;
 use Admidio\Infrastructure\Utils\SecurityUtils;
 use Admidio\UI\Presenter\FormPresenter;
+use Admidio\Users\Entity\User;
 use AdmidioPlugin\Requirements\Entity\Activity;
 use AdmidioPlugin\Requirements\Entity\RequirementType;
 use AdmidioPlugin\Requirements\Service\ActivityService;
@@ -39,9 +40,13 @@ class ActivityPresenter extends RequirementsPresenter
     /**
      * @throws Exception|\Smarty\Exception
      */
-    public function createList(string $query = '', string $requirementUuid = '', string $period = ''): void
-    {
-        global $gDb, $gL10n, $gCurrentUser;
+    public function createList(
+        string $query = '',
+        string $requirementUuid = '',
+        string $period = '',
+        string $userUuid = ''
+    ): void {
+        global $gDb, $gL10n, $gCurrentUser, $gProfileFields;
 
         $this->setHtmlID('adm_requirements_activities');
         $this->setHeadline($gL10n->get('PLG_REQUIREMENTS_ACTIVITIES'));
@@ -97,12 +102,34 @@ class ActivityPresenter extends RequirementsPresenter
             'bi-plus-circle-fill'
         );
         if ($isAdmin) {
+            $this->addPageFunctionsMenuItem('menu_item_requirements_review',
+                $gL10n->get('PLG_REQUIREMENTS_REVIEW'), $this->pageUrl('review.php'), 'bi-clipboard-data');
             $this->addPageFunctionsMenuItem('menu_item_requirements_providers',
                 $gL10n->get('PLG_REQUIREMENTS_PROVIDERS'), $this->pageUrl('providers.php'), 'bi-shop');
             $this->addPageFunctionsMenuItem('menu_item_requirements_rules',
                 $gL10n->get('PLG_REQUIREMENTS_REQUIREMENT_TYPES'), $this->pageUrl('rules.php'), 'bi-list-check');
             $this->addHistoryMenuItem('activities', array('req_activities', 'req_activity_credits'));
         }
+
+        // Administrators arrive here from a row of the review roster, which asks for the activities
+        // of one member. A normal member never gets past the record check in findActivities(), so
+        // the parameter is only resolved for an administrator in the first place.
+        $filterUserId = null;
+        $filterUserName = '';
+        if ($userUuid !== '' && $isAdmin) {
+            $filterUser = new User($gDb, $gProfileFields);
+            $filterUser->readDataByUuid($userUuid);
+            $candidateId = (int) $filterUser->getValue('usr_id');
+            // Not isMemberOfOrganization() on its own: the review links to members who have left the
+            // role, and they still have the activities it sent us here to look at. isKnownMember()
+            // is that population, and it keeps a name from another organization off the page.
+            if ($candidateId > 0 && (new ActivityService($gDb))->isKnownMember($candidateId)) {
+                $filterUserId = $candidateId;
+                $filterUserName = $filterUser->readableName();
+            }
+        }
+        $this->assignSmartyVariable('userUuid', $filterUserId === null ? '' : $userUuid);
+        $this->assignSmartyVariable('userLabel', SecurityUtils::encodeHTML($filterUserName));
 
         // Fulfilment overview bars — running + N previous periods, applicable requirements only.
         $previousPeriods = (int) (RequirementsPlugin::setting(RequirementsPlugin::SETTING_OVERVIEW_PREVIOUS_YEARS) ?? 4);
@@ -165,14 +192,16 @@ class ActivityPresenter extends RequirementsPresenter
             }
         }
         $this->assignSmartyVariable('periodLabel', $periodLabel);
-        $this->assignSmartyVariable('clearPeriodUrl', $this->pageUrl('index.php', array(
+        // One way out of both narrowings: a member filter and a period filter are two halves of the
+        // same "I followed a link to get here", and clearing one and not the other only puzzles.
+        $this->assignSmartyVariable('clearFilterUrl', $this->pageUrl('index.php', array(
             'mode' => 'list',
             'query' => $query,
             'requirement' => $requirementUuid
         )));
 
         $rows = array();
-        foreach ((new ActivityService($gDb))->findActivities(null, $query, $selectedTypeId, $periodFilter) as $activity) {
+        foreach ((new ActivityService($gDb))->findActivities($filterUserId, $query, $selectedTypeId, $periodFilter) as $activity) {
             $rowId = 'adm_requirements_activity_' . $activity['rqa_uuid'];
             $editUrl = $this->pageUrl('index.php', array('mode' => 'edit', 'uuid' => $activity['rqa_uuid']));
 
@@ -239,14 +268,6 @@ class ActivityPresenter extends RequirementsPresenter
         $this->assignSmartyVariable('rows', $rows);
         $this->assignSmartyVariable('messageNoData', $gL10n->get('SYS_NO_ENTRIES'));
         $this->addHtmlByTemplate('requirements.activities.list.tpl');
-    }
-
-    private static function formatCredits(mixed $value): string
-    {
-        if ($value === null || $value === '') {
-            return '';
-        }
-        return rtrim(rtrim(number_format((float) $value, 2, '.', ''), '0'), '.');
     }
 
     /**

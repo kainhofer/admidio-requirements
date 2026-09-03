@@ -131,9 +131,40 @@ final class FulfilmentService
         int $userId,
         DateTimeImmutable $reference
     ): ?array {
-        $typeId = (int) $type->getValue('rqt_id');
         [$target, $warnings, $hasRule] = $this->recurringTarget($type, $userId, $reference);
-        $credits = $this->loadAllCredits($userId, $typeId);
+
+        return self::recurringOutcome(
+            $type,
+            $this->loadAllCredits($userId, (int) $type->getValue('rqt_id')),
+            $target,
+            $hasRule,
+            $warnings,
+            $reference
+        );
+    }
+
+    /**
+     * The recurring coverage row itself, once the obligation and the contributions are known.
+     *
+     * Split out of lastFulfilmentCoverage() because the administrative review view needs the same
+     * answer for a whole roster and loads its contributions in one query rather than one per member
+     * (§9). Everything here is a function of the arguments, so both callers get the same row.
+     *
+     * @param array<int,array<string,mixed>> $credits every contribution, in credited-period order
+     * @param array<int,string> $warnings
+     * @return array<string,mixed>|null null when the requirement does not apply to this member and
+     *         carries no credits of theirs either
+     * @throws Exception
+     */
+    private static function recurringOutcome(
+        RequirementType $type,
+        array $credits,
+        float $target,
+        bool $hasRule,
+        array $warnings,
+        DateTimeImmutable $reference
+    ): ?array {
+        $typeId = (int) $type->getValue('rqt_id');
 
         if (!$hasRule && $credits === array()) {
             return null;
@@ -433,6 +464,231 @@ final class FulfilmentService
     }
 
     /**
+     * Per-member coverage of one requirement, for the administrative review view (§9).
+     *
+     * The member's own page asks "how am I doing"; this asks the reviewer's question instead - who
+     * does this requirement concern, who has met it, and what are the claims each answer is made of.
+     * It therefore also covers members who have since left the role but still carry credits for the
+     * period, which the member's own overview deliberately leaves out (§8.5): on their page that is
+     * history, in a review of the period it is the record under review.
+     *
+     * The queries are batched rather than looped - one for the candidates, one for the rules, one
+     * for the memberships and one for the credits, whatever the size of the roster - but the policy
+     * is the same calculateRequiredCredits() and the same recurringOutcome() the single-member path
+     * uses, so a roster row and a member's own bar cannot disagree.
+     *
+     * @param string $periodReference any day of the requested period; empty means today
+     * @param string $statusFilter    keep only members with this coverage status; empty keeps all
+     * @return array{typeId:int,requirement:string,shortName:string,anchor:string,
+     *     periodReference:string,periodLabel:string,members:array<int,array<string,mixed>>}
+     * @throws Exception
+     */
+    public function coverageForMembers(
+        int $requirementTypeId,
+        string $periodReference = '',
+        string $statusFilter = ''
+    ): array {
+        if (!RequirementsPlugin::isUsableByCurrentUser()
+            || !Component::isAdministrable(RequirementsPlugin::ID)) {
+            throw new Exception('SYS_NO_RIGHTS');
+        }
+
+        // OrganizationScope answers a requirement of another organization with an empty record, so
+        // a foreign id reads the same way an unknown one does.
+        $type = new RequirementType($this->db, $requirementTypeId);
+        $typeId = (int) $type->getValue('rqt_id');
+        if ($typeId === 0) {
+            throw new Exception('SYS_NO_RIGHTS');
+        }
+
+        $reference = self::date($periodReference === '' ? DATE_NOW : $periodReference);
+        $calendar = (string) $type->getValue('rqt_period_anchor') === 'calendar';
+        [$start, $end, $label] = $calendar
+            ? self::periodFor($type, $reference)
+            : array($reference, $reference, self::renewalLabel($type));
+
+        $rules = $this->loadRules($type, $start, $end);
+        if (!$calendar) {
+            // Nothing is pro-rated when there is no period; see recurringTarget().
+            foreach ($rules as $index => $rule) {
+                $rules[$index]['rrr_partial_period_mode'] = 'full';
+            }
+        }
+        $roleIds = array_values(array_unique(array_map(
+            static fn(array $rule): int => (int) $rule['rrr_role_id'],
+            $rules
+        )));
+
+        // A recurring requirement has no period to filter the contributions by: its cycles are found
+        // by walking all of them in order.
+        $creditPeriod = $calendar ? $start->format('Y-m-d') : null;
+        $candidates = $this->reviewCandidates($roleIds, $typeId, $start, $end, $creditPeriod);
+        $userIds = array_keys($candidates);
+        $memberships = $this->membershipsForUsers($userIds, $roleIds, $start, $end);
+        $credits = $this->readCreditsForUsers($userIds, $typeId, $creditPeriod);
+        $mode = (string) $type->getValue('rqt_multiple_roles_mode');
+
+        $members = array();
+        foreach ($candidates as $userId => $candidate) {
+            $userCredits = $credits[$userId] ?? array();
+            [$required, $warnings, $hasRule] = self::calculateRequiredCredits(
+                $mode,
+                $rules,
+                $memberships[$userId] ?? array(),
+                $start,
+                $end
+            );
+
+            if ($calendar) {
+                // A candidate whose rules were all gated out and who contributed nothing is not part
+                // of the roster: the review answers who this requirement concerns.
+                if ($required <= 0.0 && !$hasRule && $userCredits === array()) {
+                    continue;
+                }
+
+                [$attained, $pending] = self::sumCredits($userCredits);
+                $row = array(
+                    'required' => $required > 0.0 ? round($required, 2) : null,
+                    'attained' => round($attained, 2),
+                    'pending' => round($pending, 2),
+                    'percent' => $required > 0.0
+                        ? (int) round(min(100.0, ($attained / $required) * 100.0))
+                        : null,
+                    'status' => self::coverageStatus($required, $attained, $hasRule),
+                    'lastFulfilment' => null,
+                    'nextDue' => null,
+                    'warnings' => $warnings
+                );
+            } else {
+                $outcome = self::recurringOutcome(
+                    $type,
+                    $userCredits,
+                    $required,
+                    $hasRule,
+                    $warnings,
+                    $reference
+                );
+                if ($outcome === null) {
+                    continue;
+                }
+
+                $row = array(
+                    'required' => $outcome['required'],
+                    'attained' => $outcome['attained'],
+                    'pending' => $outcome['pending'],
+                    'percent' => $outcome['coverage'] === null ? null : (int) round($outcome['coverage']),
+                    'status' => $outcome['status'],
+                    'lastFulfilment' => $outcome['lastFulfilment'],
+                    'nextDue' => $outcome['nextDue'],
+                    'warnings' => $outcome['warnings']
+                );
+            }
+
+            if ($statusFilter !== '' && $row['status'] !== $statusFilter) {
+                continue;
+            }
+
+            $members[] = $candidate + $row + array('contributions' => $userCredits);
+        }
+
+        return array(
+            'typeId' => $typeId,
+            'requirement' => (string) $type->getValue('rqt_name'),
+            'shortName' => (string) $type->getValue('rqt_short_name'),
+            'anchor' => $calendar ? 'calendar' : 'last_fulfilment',
+            'periodReference' => $calendar ? $start->format('Y-m-d') : $reference->format('Y-m-d'),
+            'periodLabel' => $label,
+            'members' => $members
+        );
+    }
+
+    /**
+     * Everybody one requirement period concerns: the members of a role its rules name, and everybody
+     * who carries a contribution to it. The second half is not redundant - a member who left the role
+     * last year still has to appear in the review of the period they collected credits in.
+     *
+     * Both halves are organization-scoped, the roles through their category and the activities
+     * through their own column, so a member of another organization can never enter the roster.
+     *
+     * @param array<int,int> $roleIds
+     * @param string|null $periodReference restrict the credit half to one credited period
+     * @return array<int,array{userId:int,userUuid:string,firstName:string,lastName:string,name:string}>
+     *         keyed by user id, ordered by name
+     * @throws Exception
+     */
+    private function reviewCandidates(
+        array $roleIds,
+        int $requirementTypeId,
+        DateTimeImmutable $start,
+        DateTimeImmutable $end,
+        ?string $periodReference
+    ): array {
+        global $gCurrentOrgId, $gProfileFields;
+
+        $params = array(
+            (int) $gProfileFields->getProperty('FIRST_NAME', 'usf_id'),
+            (int) $gProfileFields->getProperty('LAST_NAME', 'usf_id')
+        );
+
+        $conditions = array();
+        if ($roleIds !== array()) {
+            $conditions[] = 'usr.usr_id IN (SELECT mem_usr_id
+                                              FROM ' . TBL_MEMBERS . '
+                                             WHERE mem_rol_id IN ('
+                . implode(', ', array_fill(0, count($roleIds), '?')) . ')
+                                               AND mem_begin <= ?
+                                               AND mem_end >= ?)';
+            $params = array_merge($params, $roleIds, array($end->format('Y-m-d'), $start->format('Y-m-d')));
+        }
+
+        $creditCondition = 'usr.usr_id IN (SELECT rqa.rqa_user_id
+                                             FROM ' . RequirementsTables::activityCredits() . ' AS rac
+                                       INNER JOIN ' . RequirementsTables::activities() . ' AS rqa
+                                               ON rqa.rqa_id = rac.rac_activity_id
+                                            WHERE rqa.rqa_org_id = ?
+                                              AND rac.rac_requirement_type_id = ?
+                                              AND rqa.rqa_status <> ?';
+        $params[] = (int) $gCurrentOrgId;
+        $params[] = $requirementTypeId;
+        $params[] = 'withdrawn';
+        if ($periodReference !== null) {
+            $creditCondition .= ' AND rac.rac_period_reference = ?';
+            $params[] = $periodReference;
+        }
+        $conditions[] = $creditCondition . ')';
+
+        $statement = $this->db->queryPrepared(
+            'SELECT usr.usr_id, usr.usr_uuid, usr.usr_login_name,
+                    first_name.usd_value AS first_name, last_name.usd_value AS last_name
+               FROM ' . TBL_USERS . ' AS usr
+          LEFT JOIN ' . TBL_USER_DATA . ' AS first_name
+                 ON first_name.usd_usr_id = usr.usr_id AND first_name.usd_usf_id = ?
+          LEFT JOIN ' . TBL_USER_DATA . ' AS last_name
+                 ON last_name.usd_usr_id = usr.usr_id AND last_name.usd_usf_id = ?
+              WHERE (' . implode(' OR ', $conditions) . ')
+           ORDER BY last_name.usd_value, first_name.usd_value, usr.usr_id',
+            $params
+        );
+
+        $candidates = array();
+        while ($row = $statement->fetch()) {
+            $first = (string) ($row['first_name'] ?? '');
+            $last = (string) ($row['last_name'] ?? '');
+            $name = trim($last . ', ' . $first, ' ,');
+
+            $candidates[(int) $row['usr_id']] = array(
+                'userId' => (int) $row['usr_id'],
+                'userUuid' => (string) $row['usr_uuid'],
+                'firstName' => $first,
+                'lastName' => $last,
+                // A profile without either name part would otherwise be an unclickable empty cell.
+                'name' => $name === '' ? (string) $row['usr_login_name'] : $name
+            );
+        }
+        return $candidates;
+    }
+
+    /**
      * How a period reads once required and attained are known.
      *
      * `fulfilled` / `missing` need a positive target. A target of exactly zero is a real
@@ -716,7 +972,7 @@ final class FulfilmentService
 
     /**
      * @param array<int,int> $roleIds
-     * @return array<int,array<int,array{start:string,end:string}>>
+     * @return array<int,array<int,array{start:string,end:string}>> by role id
      */
     private function loadMemberships(
         int $userId,
@@ -724,29 +980,49 @@ final class FulfilmentService
         DateTimeImmutable $start,
         DateTimeImmutable $end
     ): array {
-        if ($roleIds === array()) {
+        return $this->membershipsForUsers(array($userId), $roleIds, $start, $end)[$userId] ?? array();
+    }
+
+    /**
+     * The memberships of several members in the rule roles, in one query.
+     *
+     * The single-member read above is this query with one id: the review view walks a whole roster
+     * and must not ask the database once per member (§9), and two loaders that could drift apart
+     * would be two chances to answer the same question differently.
+     *
+     * @param array<int,int> $userIds
+     * @param array<int,int> $roleIds
+     * @return array<int,array<int,array<int,array{start:string,end:string}>>> by user id, then role id
+     */
+    private function membershipsForUsers(
+        array $userIds,
+        array $roleIds,
+        DateTimeImmutable $start,
+        DateTimeImmutable $end
+    ): array {
+        if ($userIds === array() || $roleIds === array()) {
             return array();
         }
 
-        $placeholders = implode(', ', array_fill(0, count($roleIds), '?'));
         $params = array_merge(
-            array($userId, $end->format('Y-m-d'), $start->format('Y-m-d')),
+            array($end->format('Y-m-d'), $start->format('Y-m-d')),
+            $userIds,
             $roleIds
         );
         $statement = $this->db->queryPrepared(
-            'SELECT mem_rol_id, mem_begin, mem_end
+            'SELECT mem_usr_id, mem_rol_id, mem_begin, mem_end
                FROM ' . TBL_MEMBERS . '
-              WHERE mem_usr_id = ?
-                AND mem_begin <= ?
+              WHERE mem_begin <= ?
                 AND mem_end >= ?
-                AND mem_rol_id IN (' . $placeholders . ')
-              ORDER BY mem_rol_id, mem_begin',
+                AND mem_usr_id IN (' . implode(', ', array_fill(0, count($userIds), '?')) . ')
+                AND mem_rol_id IN (' . implode(', ', array_fill(0, count($roleIds), '?')) . ')
+              ORDER BY mem_usr_id, mem_rol_id, mem_begin',
             $params
         );
 
         $memberships = array();
         while ($row = $statement->fetch()) {
-            $memberships[(int)$row['mem_rol_id']][] = array(
+            $memberships[(int)$row['mem_usr_id']][(int)$row['mem_rol_id']][] = array(
                 'start' => (string)$row['mem_begin'],
                 'end' => (string)$row['mem_end']
             );
@@ -1032,9 +1308,32 @@ final class FulfilmentService
      */
     private function readCredits(int $userId, int $requirementTypeId, ?string $periodReference): array
     {
+        return $this->readCreditsForUsers(array($userId), $requirementTypeId, $periodReference)[$userId] ?? array();
+    }
+
+    /**
+     * The contributions of several members to one requirement, keyed by user id and in the order of
+     * their credited period. The single-member read above is this query with one id; see
+     * membershipsForUsers() for why the review view cannot afford one query per member.
+     *
+     * @param array<int,int> $userIds
+     * @return array<int,array<int,array<string,mixed>>>
+     */
+    private function readCreditsForUsers(
+        array $userIds,
+        int $requirementTypeId,
+        ?string $periodReference
+    ): array {
         global $gCurrentOrgId;
 
-        $params = array((int)$gCurrentOrgId, $userId, $requirementTypeId, 'withdrawn');
+        if ($userIds === array()) {
+            return array();
+        }
+
+        $params = array_merge(
+            array((int)$gCurrentOrgId, $requirementTypeId, 'withdrawn'),
+            $userIds
+        );
         $periodCondition = '';
         if ($periodReference !== null) {
             $periodCondition = ' AND rac.rac_period_reference = ?';
@@ -1042,18 +1341,18 @@ final class FulfilmentService
         }
 
         $statement = $this->db->queryPrepared(
-            'SELECT rqa.rqa_uuid, rqa.rqa_title, rqa.rqa_begin_date, rqa.rqa_status,
-                    rac.rac_uuid, rac.rac_period_reference,
+            'SELECT rqa.rqa_user_id, rqa.rqa_uuid, rqa.rqa_title, rqa.rqa_begin_date, rqa.rqa_status,
+                    rac.rac_id, rac.rac_uuid, rac.rac_period_reference,
                     rac.rac_credits_claimed, rac.rac_credits_accepted
                FROM ' . RequirementsTables::activityCredits() . ' AS rac
          INNER JOIN ' . RequirementsTables::activities() . ' AS rqa
                  ON rqa.rqa_id = rac.rac_activity_id
               WHERE rqa.rqa_org_id = ?
-                AND rqa.rqa_user_id = ?
                 AND rac.rac_requirement_type_id = ?
-                AND rqa.rqa_status <> ?'
+                AND rqa.rqa_status <> ?
+                AND rqa.rqa_user_id IN (' . implode(', ', array_fill(0, count($userIds), '?')) . ')'
             . $periodCondition . '
-              ORDER BY rac.rac_period_reference, rqa.rqa_begin_date, rqa.rqa_title',
+              ORDER BY rqa.rqa_user_id, rac.rac_period_reference, rqa.rqa_begin_date, rqa.rqa_title',
             $params
         );
 
@@ -1061,8 +1360,9 @@ final class FulfilmentService
         while ($row = $statement->fetch()) {
             $effective = $row['rac_credits_accepted'] === null
                 ? (float)$row['rac_credits_claimed'] : (float)$row['rac_credits_accepted'];
-            $credits[] = array(
+            $credits[(int)$row['rqa_user_id']][] = array(
                 'activityUuid' => (string)$row['rqa_uuid'],
+                'creditId' => (int)$row['rac_id'],
                 'creditUuid' => (string)$row['rac_uuid'],
                 'title' => (string)$row['rqa_title'],
                 'date' => (string)$row['rqa_begin_date'],

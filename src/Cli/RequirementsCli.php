@@ -519,6 +519,13 @@ final class RequirementsCli
     {
         global $gCurrentUser;
 
+        // --requirement turns the report around: not every requirement of one member, but one
+        // requirement across everybody it concerns. That is the roster the web review view shows,
+        // and coverageForMembers() applies the administrator gate it needs.
+        if (array_key_exists('requirement', $options)) {
+            return self::rosterReport($options);
+        }
+
         $user = array_key_exists('user', $options)
             ? CliApplication::resolveUser(CliApplication::optionString($options, 'user'))
             : $gCurrentUser;
@@ -533,19 +540,9 @@ final class RequirementsCli
             throw new Exception('SYS_NO_RIGHTS');
         }
 
-        // A raw SYS_DATE_INVALID from deep inside the calculator does not say which option was
-        // wrong, and --period=2026 is an easy thing to type.
-        $period = CliApplication::optionString($options, 'period', DATE_NOW);
-        $parsed = \DateTimeImmutable::createFromFormat('!Y-m-d', $period);
-        if ($parsed === false || $parsed->format('Y-m-d') !== $period) {
-            throw new InvalidArgumentException(
-                'The option --period expects a date as YYYY-MM-DD, got "' . $period . '".'
-            );
-        }
-
         $coverage = (new FulfilmentService($GLOBALS['gDb']))->coverageForUser(
             (int)$user->getValue('usr_id'),
-            $period
+            self::reportPeriod($options)
         );
 
         $rows = array();
@@ -580,6 +577,82 @@ final class RequirementsCli
             $options
         );
         return 0;
+    }
+
+    /**
+     * The administrative roster of one requirement: everybody it concerns in the requested period,
+     * how far each of them has come, and with --details the contributions behind each number.
+     *
+     * The per-member report and this one print the same columns in the same order, so the same
+     * downstream parser reads both; only the first column changes what it names.
+     *
+     * @throws Exception|InvalidArgumentException
+     */
+    private static function rosterReport(array $options): int
+    {
+        global $gDb;
+
+        $type = self::loadRequirement(CliApplication::optionString($options, 'requirement'));
+        $coverage = (new FulfilmentService($gDb))->coverageForMembers(
+            (int) $type->getValue('rqt_id'),
+            self::reportPeriod($options),
+            CliApplication::optionString($options, 'status', '')
+        );
+
+        $rows = array();
+        foreach ($coverage['members'] as $member) {
+            $rows[] = array(
+                'member' => $member['name'],
+                'period' => $coverage['periodLabel'],
+                'attained' => $member['attained'],
+                'required' => $member['required'],
+                'coverage_percent' => $member['percent'],
+                'status' => $member['status'],
+                'warnings' => implode(' | ', $member['warnings'])
+            );
+
+            if (CliApplication::optionBool($options, 'details', false)) {
+                foreach ($member['contributions'] as $contribution) {
+                    $rows[] = array(
+                        'member' => '  ↳ ' . $contribution['title'],
+                        'period' => $contribution['date'],
+                        'attained' => $contribution['effectiveCredits'],
+                        'required' => null,
+                        'coverage_percent' => null,
+                        'status' => 'activity',
+                        'warnings' => ''
+                    );
+                }
+            }
+        }
+
+        CliApplication::writeRows(
+            $rows,
+            CliApplication::optionString($options, 'format', 'table'),
+            $options
+        );
+        return 0;
+    }
+
+    /**
+     * The --period option as a Y-m-d date.
+     *
+     * A raw SYS_DATE_INVALID from deep inside the calculator does not say which option was wrong,
+     * and --period=2026 is an easy thing to type.
+     *
+     * @throws InvalidArgumentException
+     */
+    private static function reportPeriod(array $options): string
+    {
+        $period = CliApplication::optionString($options, 'period', DATE_NOW);
+        $parsed = \DateTimeImmutable::createFromFormat('!Y-m-d', $period);
+        if ($parsed === false || $parsed->format('Y-m-d') !== $period) {
+            throw new InvalidArgumentException(
+                'The option --period expects a date as YYYY-MM-DD, got "' . $period . '".'
+            );
+        }
+
+        return $period;
     }
 
     private static function mutate(array $options, callable $callback): int

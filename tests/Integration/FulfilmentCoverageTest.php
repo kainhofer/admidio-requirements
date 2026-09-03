@@ -4,7 +4,6 @@ namespace AdmidioPlugin\Requirements\Tests\Integration;
 use Admidio\Infrastructure\Exception;
 use AdmidioPlugin\Requirements\Database\RequirementsTables;
 use AdmidioPlugin\Requirements\Entity\Activity;
-use AdmidioPlugin\Requirements\Entity\ActivityCredit;
 use AdmidioPlugin\Requirements\Entity\RequirementRoleRule;
 use AdmidioPlugin\Requirements\Entity\RequirementType;
 use AdmidioPlugin\Requirements\RequirementsPlugin;
@@ -463,84 +462,6 @@ final class FulfilmentCoverageTest extends RequirementsDatabaseTestCase
 
         return null;
     }
-
-    /**
-     * @param array<string,mixed> $ruleValues
-     */
-    private function createRequirement(
-        string $name,
-        int $roleId,
-        float $credits,
-        array $ruleValues = array()
-    ): RequirementType {
-        static $counter = 0;
-        ++$counter;
-
-        $service = new RequirementTypeService($this->getDatabase());
-        $type = new RequirementType($this->getDatabase());
-        $service->saveType($type, array(
-            'rqt_name' => $name . ' ' . $counter,
-            'rqt_short_name' => strtoupper(substr($name, 0, 3)) . $counter,
-            'rqt_period_unit' => 'year',
-            'rqt_period_anchor' => 'calendar'
-        ));
-
-        $service->saveRule(new RequirementRoleRule($this->getDatabase()), $type, array_merge(array(
-            'rrr_role_id' => $roleId,
-            'rrr_required_credits' => $credits,
-            'rrr_partial_period_mode' => 'pro_rata',
-            'rrr_proration_basis' => 'month'
-        ), $ruleValues));
-
-        return $type;
-    }
-
-    private function createCreditedActivity(
-        int $userId,
-        RequirementType $type,
-        string $beginDate,
-        float $claimed,
-        ?float $accepted = null,
-        ?string $periodReference = null
-    ): Activity {
-        $service = new ActivityService($this->getDatabase());
-        $activity = new Activity($this->getDatabase());
-        $service->save($activity, array(
-            'rqa_title' => 'Course on ' . $beginDate,
-            'rqa_begin_date' => $beginDate
-        ), $userId);
-
-        $service->saveCredit(
-            new ActivityCredit($this->getDatabase()),
-            $activity,
-            $type,
-            $periodReference ?? $beginDate,
-            $claimed,
-            $accepted
-        );
-
-        return $activity;
-    }
-
-    /**
-     * @return array{usr_id:int,rol_id:int}
-     */
-    private function createMemberJoining(string $login, string $joinDate): array
-    {
-        global $gCurrentOrgId;
-
-        $user = $this->fixture->createAndSaveUser($login, $login . '@example.local', (int) $gCurrentOrgId);
-        $role = $this->fixture->createAndSaveRole('Role ' . $login, (int) $gCurrentOrgId);
-        $this->fixture->assignUserToRolePeriod(
-            (int) $user['usr_id'],
-            (int) $role['rol_id'],
-            $joinDate,
-            '9999-12-31'
-        );
-
-        return array('usr_id' => (int) $user['usr_id'], 'rol_id' => (int) $role['rol_id']);
-    }
-
     private function countActivities(): int
     {
         return (int) $this->getDatabase()->queryPrepared(
