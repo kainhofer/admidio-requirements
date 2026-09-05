@@ -13,12 +13,14 @@ final class RequirementsPluginManifestTest extends AdmidioTestCase
 
         $this->assertTrue($plugin->isValid(), (string)$plugin->error);
         $this->assertSame('requirements', $plugin->id);
-        $this->assertSame('0.2.0', $plugin->version);
-        // Membership, not equality: a page added later is not a regression, and index.php being
-        // the landing page is (REQ-DEC-015).
+        $this->assertSame('0.3.0', $plugin->version);
+        // Membership, not equality: a page added later is not a regression, and losing one is.
+        // The landing page of REQ-DEC-015 is decided by name and not by position - Plugin::getUrl()
+        // asks whether index.php is among the pages, and getPages() sorts them - so what has to
+        // hold is that index.php is still there, which import.php sorting ahead of it does not
+        // change.
         $pages = $plugin->getPages();
-        $this->assertSame('index.php', $pages[0] ?? null, 'index.php is the plugin main page.');
-        foreach (array('index.php', 'providers.php', 'rules.php') as $page) {
+        foreach (array('index.php', 'providers.php', 'rules.php', 'review.php', 'import.php') as $page) {
             $this->assertContains($page, $pages);
         }
         $normalize = static fn(?string $path): ?string => $path === null ? null : str_replace('\\', '/', $path);

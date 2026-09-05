@@ -25,7 +25,10 @@ final class RequirementsCliRegistrationTest extends RequirementsUnitTestCase
         'requirements:activity-list',
         // submitting one's own draft is what a normal member does; submit() does the record check
         'requirements:activity-submit',
-        'requirements:report'
+        'requirements:report',
+        // the preview writes nothing and a member may import their own activities; the writing
+        // half is gated by --commit, and by ActivityService per row
+        'requirements:import'
     );
 
     /** Commands that change data, and therefore require administering the component. */
@@ -147,16 +150,42 @@ final class RequirementsCliRegistrationTest extends RequirementsUnitTestCase
         );
     }
 
-    public function testSubmitIsTheOneVisibleCommandThatWrites(): void
+    /**
+     * The two visible commands that can write say so in different ways, and both ways have to keep
+     * working: `activity-submit` writes whenever it is run and is therefore rehearsable with
+     * `--dry-run`, while `import` writes nothing until `--commit` is given - so it needs no
+     * rehearsal flag, and must not silently acquire the habit of writing by default.
+     */
+    public function testTheVisibleCommandsThatWriteSayHowTheyAreRehearsed(): void
     {
-        $writing = array();
+        $withDryRun = array();
         foreach (self::VISIBLE as $name) {
             if ((bool) CliTaskRegistry::get($name)['supportsDryRun']) {
-                $writing[] = $name;
+                $withDryRun[] = $name;
             }
         }
 
-        $this->assertSame(array('requirements:activity-submit'), $writing);
+        $this->assertSame(array('requirements:activity-submit'), $withDryRun);
+        $this->assertStringContainsString(
+            '--commit',
+            (string) CliTaskRegistry::get('requirements:import')['usage']
+        );
+    }
+
+    /**
+     * REQ-DEC-008 leaves the duplicate policy without a default, which only holds if the option is
+     * registered as required - otherwise the wizard-less path would fail deep inside the service.
+     */
+    public function testImportRequiresAnExplicitDuplicatePolicy(): void
+    {
+        $options = array();
+        foreach (CliTaskRegistry::get('requirements:import')['options'] as $option) {
+            $options[$option['name']] = $option;
+        }
+
+        $this->assertArrayHasKey('duplicates', $options);
+        $this->assertTrue((bool) $options['duplicates']['required']);
+        $this->assertSame(array('skip', 'create'), $options['duplicates']['values']);
     }
 
     /**

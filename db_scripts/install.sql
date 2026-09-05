@@ -44,6 +44,7 @@ CREATE TABLE %PREFIX%_req_activities (
     rqa_status              varchar(32)      NOT NULL DEFAULT 'draft',
     rqa_review_comments     text             NULL,
     rqa_review_status       varchar(32)      NULL,
+    rqa_source_key          varchar(190)     NULL,
     rqa_usr_id_create       integer unsigned,
     rqa_timestamp_create    timestamp        NOT NULL DEFAULT CURRENT_TIMESTAMP,
     rqa_usr_id_change       integer unsigned,
@@ -53,7 +54,8 @@ CREATE TABLE %PREFIX%_req_activities (
     KEY %PREFIX%_idx_rqa_org_user_date (rqa_org_id, rqa_user_id, rqa_begin_date),
     KEY %PREFIX%_idx_rqa_provider (rqa_provider_id),
     KEY %PREFIX%_idx_rqa_status (rqa_org_id, rqa_status),
-    KEY %PREFIX%_idx_rqa_review_status (rqa_org_id, rqa_review_status)
+    KEY %PREFIX%_idx_rqa_review_status (rqa_org_id, rqa_review_status),
+    KEY %PREFIX%_idx_rqa_source_key (rqa_org_id, rqa_source_key)
 )
 ENGINE=InnoDB
 DEFAULT CHARSET=utf8mb4

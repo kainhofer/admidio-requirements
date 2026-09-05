@@ -101,6 +101,14 @@ class ActivityPresenter extends RequirementsPresenter
             $this->pageUrl('index.php', array('mode' => 'edit')),
             'bi-plus-circle-fill'
         );
+
+        // A member may import their own activities; the import assigns them server-side (§12).
+        $this->addPageFunctionsMenuItem(
+            'menu_item_requirements_import',
+            $gL10n->get('PLG_REQUIREMENTS_IMPORT'),
+            $this->pageUrl('import.php'),
+            'bi-upload'
+        );
         if ($isAdmin) {
             $this->addPageFunctionsMenuItem('menu_item_requirements_review',
                 $gL10n->get('PLG_REQUIREMENTS_REVIEW'), $this->pageUrl('review.php'), 'bi-clipboard-data');

@@ -26,6 +26,21 @@ require_once dirname(__DIR__) . '/Support/RequirementsDatabaseTestCase.php';
  */
 final class RequirementsCliTest extends RequirementsDatabaseTestCase
 {
+    /** @var array<int,string> import files written by a test, removed afterwards */
+    private array $importFiles = array();
+
+    protected function tearDown(): void
+    {
+        foreach ($this->importFiles as $path) {
+            if (is_file($path)) {
+                unlink($path);
+            }
+        }
+        $this->importFiles = array();
+
+        parent::tearDown();
+    }
+
     /**
      * Run a command and return the rows it printed as JSON.
      *
@@ -470,6 +485,182 @@ final class RequirementsCliTest extends RequirementsDatabaseTestCase
         $this->expectException(InvalidArgumentException::class);
 
         $this->runCommand('providerUpdate', array('99999999'), array('name' => 'Nothing here'));
+    }
+
+    // ---------------------------------------------------------------- import
+
+    /**
+     * The command reports what an import would do and writes nothing, because writing is what
+     * `--commit` is for. An import command whose default is to write is one accident away from a
+     * database full of somebody's spreadsheet.
+     */
+    public function testImportWithoutCommitWritesNothing(): void
+    {
+        $this->createMember('cli_import_preview');
+        $file = $this->importFile(array(
+            array('user_login', 'title', 'begin_date'),
+            array('cli_import_preview', 'First aid', '2026-03-01')
+        ));
+
+        $rows = $this->runCommand('import', array($file), array('duplicates' => 'create'));
+
+        $this->assertSame('create', $rows[0]['status']);
+        $this->assertSame('First aid', $rows[0]['title']);
+        $this->assertSame('preview', $rows[1]['status'], 'the last row is the summary');
+        $this->assertSame(0, $this->countRows(RequirementsTables::activities()));
+    }
+
+    public function testImportWithCommitWritesTheRowsAndTheirCredits(): void
+    {
+        $this->createMember('cli_import_commit');
+        $type = $this->createRequirementType('CLI import');
+        $type->setValue('rqt_short_name', 'CLIIMP');
+        $type->save();
+
+        $file = $this->importFile(array(
+            array('user_login', 'title', 'begin_date', 'credit_CLIIMP'),
+            array('cli_import_commit', 'First aid', '2026-03-01', '8')
+        ));
+
+        $rows = $this->runCommand('import', array($file), array(
+            'duplicates' => 'create',
+            'commit' => true
+        ));
+
+        $this->assertSame('imported', $rows[0]['status']);
+        $this->assertSame('total', $rows[1]['status']);
+        $this->assertSame(1, $this->countRows(RequirementsTables::activities()));
+        $this->assertSame(8.0, (float) $this->getDatabase()->queryPrepared(
+            'SELECT rac_credits_claimed FROM ' . RequirementsTables::activityCredits()
+        )->fetchColumn());
+    }
+
+    /**
+     * A file whose columns are not the field names is mapped by --map, which is what makes the
+     * command usable at all against an export nobody here controls.
+     */
+    public function testImportMapsColumnsByTheirHeadingOrTheirIndex(): void
+    {
+        $this->createMember('cli_import_map');
+        $file = $this->importFile(array(
+            array('Who', 'Course', 'When'),
+            array('cli_import_map', 'First aid', '2026-03-01')
+        ));
+
+        $rows = $this->runCommand('import', array($file), array(
+            'duplicates' => 'create',
+            'commit' => true,
+            'map' => array('user_login=Who', 'title=Course', 'begin_date=2')
+        ));
+
+        $this->assertSame('imported', $rows[0]['status'], (string) $rows[0]['messages']);
+        $this->assertSame('First aid', (string) $this->getDatabase()->queryPrepared(
+            'SELECT rqa_title FROM ' . RequirementsTables::activities()
+        )->fetchColumn());
+    }
+
+    public function testImportRefusesAMalformedMapAssignment(): void
+    {
+        $this->createMember('cli_import_badmap');
+        $file = $this->importFile(array(
+            array('title', 'begin_date'),
+            array('First aid', '2026-03-01')
+        ));
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('--map expects FIELD=COLUMN');
+
+        $this->runCommand('import', array($file), array(
+            'duplicates' => 'create',
+            'map' => array('nonsense')
+        ));
+    }
+
+    /**
+     * REQ-DEC-008 gives the policy no default, and the command must not invent one - not even the
+     * safe-looking `skip`, which would silently drop a corrected re-import.
+     */
+    public function testImportRefusesToRunWithoutADuplicatePolicy(): void
+    {
+        $this->createMember('cli_import_nopolicy');
+        $file = $this->importFile(array(
+            array('user_login', 'title', 'begin_date'),
+            array('cli_import_nopolicy', 'First aid', '2026-03-01')
+        ));
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('duplicate policy must be given explicitly');
+
+        $this->runCommand('import', array($file), array());
+    }
+
+    /**
+     * --user assigns the whole file to one member, for an export that names the course but not who
+     * attended it. It is the administrator's alternative to a member column, not an addition to it.
+     */
+    public function testImportAssignsTheWholeFileToTheMemberGivenByUser(): void
+    {
+        $member = $this->createMember('cli_import_user');
+        $file = $this->importFile(array(
+            array('title', 'begin_date'),
+            array('First aid', '2026-03-01')
+        ));
+
+        $this->runCommand('import', array($file), array(
+            'duplicates' => 'create',
+            'commit' => true,
+            'user' => (string) $member['usr_id']
+        ));
+
+        $this->assertSame($member['usr_id'], (int) $this->getDatabase()->queryPrepared(
+            'SELECT rqa_user_id FROM ' . RequirementsTables::activities()
+        )->fetchColumn());
+    }
+
+    /**
+     * A file that produced nothing but errors is a failed import rather than a successful report of
+     * failures: a nightly job piping an export in has to be able to notice.
+     */
+    public function testImportExitsNonZeroWhenEveryRowFailed(): void
+    {
+        $this->createMember('cli_import_fail');
+        $file = $this->importFile(array(
+            array('user_login', 'title', 'begin_date'),
+            array('nobody_at_all', 'First aid', '2026-03-01')
+        ));
+
+        ob_start();
+        try {
+            $exit = RequirementsCli::import(
+                array($file),
+                array('format' => 'json', 'duplicates' => 'create', 'commit' => true)
+            );
+        } finally {
+            ob_end_clean();
+        }
+
+        $this->assertSame(1, $exit);
+        $this->assertSame(0, $this->countRows(RequirementsTables::activities()));
+    }
+
+    /**
+     * @param array<int,array<int,mixed>> $rows
+     */
+    private function importFile(array $rows): string
+    {
+        $lines = array();
+        foreach ($rows as $row) {
+            $lines[] = implode(',', array_map(
+                static fn(mixed $value): string => '"' . str_replace('"', '""', (string) $value) . '"',
+                $row
+            ));
+        }
+
+        $path = sys_get_temp_dir() . '/req_cli_import_' . uniqid('', true) . '.csv';
+        file_put_contents($path, implode("\n", $lines) . "\n");
+        $this->importFiles[] = $path;
+
+        return $path;
     }
 
     // ---------------------------------------------------------------- helpers

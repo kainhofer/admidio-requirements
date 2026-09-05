@@ -54,7 +54,7 @@ abstract class RequirementsDatabaseTestCase extends AdministratorTestCase
         // The registry reads the component table for this; supplying it keeps the test to the
         // services and off the installer. null puts it back to reading the database.
         PluginRegistry::setInstallations(array(
-            RequirementsPlugin::ID => array('comId' => 1, 'version' => '0.2.0')
+            RequirementsPlugin::ID => array('comId' => 1, 'version' => '0.3.0')
         ));
 
         $this->enablePluginForCurrentOrganization();

@@ -2,6 +2,7 @@
 use Admidio\Infrastructure\Cli\CliTaskRegistry;
 use AdmidioPlugin\Requirements\Cli\RequirementsCli;
 use AdmidioPlugin\Requirements\RequirementsPlugin;
+use AdmidioPlugin\Requirements\Service\ImportService;
 
 if (PHP_SAPI !== 'cli') {
     exit('This page may not be called directly!');
@@ -364,6 +365,42 @@ CliTaskRegistry::register(
                 'no-credits-required', 'additional-credits', 'none')),
         $opt('period', 'Date identifying the requested requirement period.', 'YYYY-MM-DD'),
         $opt('details', 'Include contributing activity rows.', '', false, false, true),
+        $format
+    ),
+    array(),
+    CliTaskRegistry::ACCESS_VISIBLE
+);
+
+/*
+ * Import. `--commit` is what separates the preview from the write, rather than the `--dry-run` the
+ * mutating commands use: a preview here never writes at all, so there is no transaction to roll
+ * back, and a command whose default is to write nothing should not have to be told so.
+ */
+CliTaskRegistry::register(
+    'requirements:import',
+    RequirementsPlugin::ID,
+    array(RequirementsCli::class, 'import'),
+    'Import activities and their credits from a CSV or spreadsheet file. Reports what would happen '
+        . 'unless --commit is given.',
+    'requirements:import FILE --duplicates=POLICY [--map=FIELD=COLUMN]... [--user=USER] [--commit]',
+    array($arg('file', 'Path to the CSV, XLSX, XLS or ODS file.')),
+    array(
+        $opt('duplicates', 'What to do with a row that repeats an existing activity. Required.',
+            'POLICY', true, false, false, ImportService::DUPLICATE_POLICIES),
+        $opt('map', 'Assign one field: FIELD=COLUMN, where COLUMN is a header title or a '
+            . 'zero-based index. Repeatable; headers that spell a field name map themselves.',
+            'FIELD=COLUMN', false, true),
+        $opt('user', 'Assign every row to this member, instead of reading the member from the file. '
+            . 'Administrators only.', 'USER'),
+        $opt('no-header', 'The first row is data, not column titles.', '', false, false, true),
+        $opt('commit', 'Actually write the rows. Without it nothing is written.', '', false, false, true),
+        $opt('format-in', 'Input format.', 'FORMAT', false, false, false, ImportService::inputFormats()),
+        $opt('worksheet', 'Worksheet name or zero-based index.', 'SHEET'),
+        $opt('encoding', 'CSV input encoding.', 'ENCODING', false, false, false,
+            ImportService::INPUT_ENCODINGS),
+        $opt('delimiter', 'CSV field delimiter.', 'CHAR', false, false, false,
+            array_keys(ImportService::CSV_DELIMITERS)),
+        $opt('enclosure', 'CSV field enclosure.', 'CHAR', false, false, false, ImportService::CSV_ENCLOSURES),
         $format
     ),
     array(),

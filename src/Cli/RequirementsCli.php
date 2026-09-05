@@ -12,6 +12,7 @@ use AdmidioPlugin\Requirements\Entity\RequirementRoleRule;
 use AdmidioPlugin\Requirements\Entity\RequirementType;
 use AdmidioPlugin\Requirements\Service\ActivityService;
 use AdmidioPlugin\Requirements\Service\FulfilmentService;
+use AdmidioPlugin\Requirements\Service\ImportService;
 use AdmidioPlugin\Requirements\Service\ProviderService;
 use AdmidioPlugin\Requirements\Service\RequirementTypeService;
 use AdmidioPlugin\Requirements\RequirementsPlugin;
@@ -513,6 +514,110 @@ final class RequirementsCli
                 'deleted' => true
             );
         });
+    }
+
+    /**
+     * Import activities and their credits from a CSV or spreadsheet file (§12).
+     *
+     * The command is the same three steps the wizard walks: read, analyse, write. Without
+     * `--commit` it stops after the analysis and prints what an import would do, which is the
+     * preview - and a preview here is not a rolled-back import but a pass that never writes, so a
+     * `--dry-run` style rollback cannot take a surrounding transaction with it.
+     *
+     * @throws Exception|InvalidArgumentException
+     */
+    public static function import(array $arguments, array $options): int
+    {
+        global $gDb;
+
+        $file = CliApplication::requireArgument($arguments, 0, 'file');
+        $service = new ImportService($gDb);
+
+        $rows = $service->readFile(
+            $file,
+            CliApplication::optionString($options, 'format-in', 'AUTO'),
+            CliApplication::optionString($options, 'encoding', ''),
+            CliApplication::optionString($options, 'delimiter', ''),
+            CliApplication::optionString($options, 'enclosure', 'AUTO'),
+            CliApplication::optionString($options, 'worksheet', '')
+        );
+
+        // --map is repeatable: --map=title=Course --map=credit_CPD=Points
+        $assignments = array();
+        foreach (CliApplication::optionValues($options, 'map') as $assignment) {
+            $parts = explode('=', $assignment, 2);
+            if (count($parts) !== 2 || trim($parts[0]) === '') {
+                throw new InvalidArgumentException(
+                    'The option --map expects FIELD=COLUMN, got "' . $assignment . '".'
+                );
+            }
+            $assignments[trim($parts[0])] = trim($parts[1]);
+        }
+
+        $firstRowHeader = CliApplication::optionBool($options, 'no-header', false) !== true;
+        $mapping = $service->resolveMapping(
+            $rows,
+            $assignments,
+            $firstRowHeader,
+            Component::isAdministrable(RequirementsPlugin::ID)
+        );
+
+        $importOptions = array(
+            'firstRowHeader' => $firstRowHeader,
+            'duplicates' => CliApplication::optionString($options, 'duplicates', '')
+        );
+        if (array_key_exists('user', $options)) {
+            $importOptions['userId'] = (int) CliApplication::resolveUser(
+                CliApplication::optionString($options, 'user')
+            )->getValue('usr_id');
+        }
+
+        $commit = CliApplication::optionBool($options, 'commit', false) === true;
+        $result = $commit
+            ? $service->import($rows, $mapping, $importOptions)
+            : $service->analyse($rows, $mapping, $importOptions);
+
+        $output = array();
+        foreach ($result['rows'] as $row) {
+            $credits = array();
+            foreach ($row['credits'] as $credit) {
+                $credits[] = $credit['requirement'] . ' ' . $credit['claimed'] . ' @ ' . $credit['period'];
+            }
+
+            $output[] = array(
+                'row' => $row['row'],
+                'status' => $row['status'],
+                'member' => $row['member'],
+                'title' => $row['title'],
+                'begin' => $row['begin'],
+                'credits' => implode(' | ', $credits),
+                'messages' => implode(' | ', $row['messages'])
+            );
+        }
+
+        // The counts go last so that they are the final line of a table and the caller of
+        // --format=json still finds them under a key of their own.
+        $output[] = array(
+            'row' => null,
+            'status' => $commit ? 'total' : 'preview',
+            'member' => '',
+            'title' => $result['summary']['rows'] . ' rows',
+            'begin' => '',
+            'credits' => $result['summary']['credits'] . ' credits',
+            'messages' => ($commit ? 'imported ' : 'to create ') . $result['summary']['create']
+                . ', skipped ' . $result['summary']['skip']
+                . ', errors ' . $result['summary']['error']
+        );
+
+        CliApplication::writeRows(
+            $output,
+            CliApplication::optionString($options, 'format', 'table'),
+            $options
+        );
+
+        // A file that produced nothing but errors is a failed import, not a successful report of
+        // failures - a script that pipes a nightly export in has to be able to notice.
+        return $result['summary']['error'] > 0 && $result['summary']['create'] === 0 ? 1 : 0;
     }
 
     public static function report(array $arguments, array $options): int
