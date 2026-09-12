@@ -165,6 +165,25 @@ CREATE UNIQUE INDEX %PREFIX%_idx_rac_uuid ON %PREFIX%_req_activity_credits (rac_
 CREATE UNIQUE INDEX %PREFIX%_idx_rac_act_req_period ON %PREFIX%_req_activity_credits (rac_activity_id, rac_requirement_type_id, rac_period_reference);
 CREATE INDEX %PREFIX%_idx_rac_requirement_period ON %PREFIX%_req_activity_credits (rac_requirement_type_id, rac_period_reference);
 
+CREATE TABLE %PREFIX%_req_activity_files
+(
+    raf_id                  integer unsigned NOT NULL AUTO_INCREMENT,
+    raf_uuid                varchar(36)      NOT NULL,
+    raf_activity_id         integer unsigned NOT NULL,
+    raf_name                varchar(255)     NOT NULL,
+    raf_mime_type           varchar(128)     NOT NULL,
+    raf_size                integer unsigned NOT NULL,
+    raf_usr_id_create       integer unsigned,
+    raf_timestamp_create    timestamp        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (raf_id)
+)
+ENGINE = InnoDB
+DEFAULT CHARSET = utf8mb4
+COLLATE = utf8mb4_unicode_ci;
+
+CREATE UNIQUE INDEX %PREFIX%_idx_raf_uuid ON %PREFIX%_req_activity_files (raf_uuid);
+CREATE INDEX %PREFIX%_idx_raf_activity ON %PREFIX%_req_activity_files (raf_activity_id);
+
 ALTER TABLE %PREFIX%_req_providers
     ADD CONSTRAINT %PREFIX%_fk_rqp_org FOREIGN KEY (rqp_org_id) REFERENCES %PREFIX%_organizations (org_id) ON DELETE RESTRICT ON UPDATE RESTRICT,
     ADD CONSTRAINT %PREFIX%_fk_rqp_usr_create FOREIGN KEY (rqp_usr_id_create) REFERENCES %PREFIX%_users (usr_id) ON DELETE SET NULL ON UPDATE RESTRICT,
@@ -193,3 +212,7 @@ ALTER TABLE %PREFIX%_req_activity_credits
     ADD CONSTRAINT %PREFIX%_fk_rac_requirement FOREIGN KEY (rac_requirement_type_id) REFERENCES %PREFIX%_req_requirement_types (rqt_id) ON DELETE RESTRICT ON UPDATE RESTRICT,
     ADD CONSTRAINT %PREFIX%_fk_rac_usr_create FOREIGN KEY (rac_usr_id_create) REFERENCES %PREFIX%_users (usr_id) ON DELETE SET NULL ON UPDATE RESTRICT,
     ADD CONSTRAINT %PREFIX%_fk_rac_usr_change FOREIGN KEY (rac_usr_id_change) REFERENCES %PREFIX%_users (usr_id) ON DELETE SET NULL ON UPDATE RESTRICT;
+
+ALTER TABLE %PREFIX%_req_activity_files
+    ADD CONSTRAINT %PREFIX%_fk_raf_activity FOREIGN KEY (raf_activity_id) REFERENCES %PREFIX%_req_activities (rqa_id) ON DELETE CASCADE ON UPDATE RESTRICT,
+    ADD CONSTRAINT %PREFIX%_fk_raf_usr_create FOREIGN KEY (raf_usr_id_create) REFERENCES %PREFIX%_users (usr_id) ON DELETE SET NULL ON UPDATE RESTRICT;

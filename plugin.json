@@ -48,6 +48,45 @@
             "label": "PLG_REQUIREMENTS_PRORATION_DEFAULT",
             "description": "PLG_REQUIREMENTS_PRORATION_DEFAULT_DESC"
         },
+        "requirements_files_enabled": {
+            "type": "bool",
+            "default": 0,
+            "label": "PLG_REQUIREMENTS_FILES_ENABLED",
+            "description": "PLG_REQUIREMENTS_FILES_ENABLED_DESC"
+        },
+        "requirements_files_max_count": {
+            "type": "int",
+            "default": 5,
+            "min": 1,
+            "max": 50,
+            "step": 1,
+            "label": "PLG_REQUIREMENTS_FILES_MAX_COUNT",
+            "description": "PLG_REQUIREMENTS_FILES_MAX_COUNT_DESC"
+        },
+        "requirements_files_max_size": {
+            "type": "int",
+            "default": 10,
+            "min": 1,
+            "max": 100,
+            "step": 1,
+            "label": "PLG_REQUIREMENTS_FILES_MAX_SIZE",
+            "description": "PLG_REQUIREMENTS_FILES_MAX_SIZE_DESC"
+        },
+        "requirements_files_allowed_types": {
+            "type": "string",
+            "default": "pdf,jpg,jpeg,png",
+            "label": "PLG_REQUIREMENTS_FILES_ALLOWED_TYPES",
+            "description": "PLG_REQUIREMENTS_FILES_ALLOWED_TYPES_DESC"
+        },
+        "requirements_files_total_quota": {
+            "type": "int",
+            "default": 0,
+            "min": 0,
+            "max": 100000,
+            "step": 1,
+            "label": "PLG_REQUIREMENTS_FILES_TOTAL_QUOTA",
+            "description": "PLG_REQUIREMENTS_FILES_TOTAL_QUOTA_DESC"
+        },
         "requirements_overview_previous_years": {
             "type": "int",
             "default": 4,

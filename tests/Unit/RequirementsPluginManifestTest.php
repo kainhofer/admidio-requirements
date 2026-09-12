@@ -20,7 +20,7 @@ final class RequirementsPluginManifestTest extends AdmidioTestCase
         // hold is that index.php is still there, which import.php sorting ahead of it does not
         // change.
         $pages = $plugin->getPages();
-        foreach (array('index.php', 'providers.php', 'rules.php', 'review.php', 'import.php') as $page) {
+        foreach (array('index.php', 'providers.php', 'rules.php', 'review.php', 'import.php', 'file.php') as $page) {
             $this->assertContains($page, $pages);
         }
         $normalize = static fn(?string $path): ?string => $path === null ? null : str_replace('\\', '/', $path);

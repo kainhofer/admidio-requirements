@@ -90,14 +90,38 @@ abstract class RequirementsDatabaseTestCase extends AdministratorTestCase
     }
 
     /**
-     * Run the shipped install script, unless the tables are already there.
+     * Run the shipped install script, unless the schema is already there and complete.
+     *
+     * "Complete" is the whole set of tables, not the first of them. The plugin tables are created
+     * outside the per-test transaction and therefore survive between runs, so a run that came after
+     * a table was added to install.sql would otherwise find the old schema, decide it was done, and
+     * fail every test in a way that says nothing about the table that is missing.
      */
     protected static function installRequirementsSchema(Database $db): void
     {
-        if (self::tableExists($db, RequirementsTables::providers())) {
+        $tables = array(
+            RequirementsTables::providers(),
+            RequirementsTables::activities(),
+            RequirementsTables::requirementTypes(),
+            RequirementsTables::requirementRoleRules(),
+            RequirementsTables::activityCredits(),
+            RequirementsTables::activityFiles()
+        );
+
+        $missing = false;
+        foreach ($tables as $table) {
+            if (!self::tableExists($db, $table)) {
+                $missing = true;
+                break;
+            }
+        }
+        if (!$missing) {
             return;
         }
 
+        // A half-old schema cannot be added to, so it goes and is built again from the script that
+        // ships - which is also what exercises uninstall.sql on every schema change.
+        self::runSchemaScript($db, dirname(__DIR__, 2) . '/db_scripts/uninstall.sql');
         self::runSchemaScript($db, dirname(__DIR__, 2) . '/db_scripts/install.sql');
     }
 

@@ -22,9 +22,11 @@ use Admidio\Infrastructure\Exception;
 use Admidio\Infrastructure\Plugins\PluginRegistry;
 use Admidio\Infrastructure\Utils\SecurityUtils;
 use AdmidioPlugin\Requirements\Entity\Activity;
+use AdmidioPlugin\Requirements\Entity\ActivityFile;
 use AdmidioPlugin\Requirements\Presenter\ActivityPresenter;
 use AdmidioPlugin\Requirements\RequirementsPlugin;
 use AdmidioPlugin\Requirements\Service\ActivityService;
+use AdmidioPlugin\Requirements\Service\ActivityFileService;
 use AdmidioPlugin\Requirements\Service\RequirementTypeService;
 
 try {
@@ -33,7 +35,7 @@ try {
 
     $getMode = admFuncVariableIsValid($_GET, 'mode', 'string', array(
         'defaultValue' => 'list',
-        'validValues' => array('list', 'edit', 'save', 'submit', 'delete')
+        'validValues' => array('list', 'edit', 'save', 'submit', 'delete', 'file-delete')
     ));
     // No defaultValue here: admFuncVariableIsValid() only returns early for a missing parameter
     // when none is set, otherwise it would validate the empty string against the datatype.
@@ -42,6 +44,7 @@ try {
     $getRequirement = admFuncVariableIsValid($_GET, 'requirement', 'uuid');
     $getPeriod = admFuncVariableIsValid($_GET, 'period', 'date');
     $getUser = admFuncVariableIsValid($_GET, 'user', 'uuid');
+    $getFile = admFuncVariableIsValid($_GET, 'file', 'uuid');
 
     switch ($getMode) {
         case 'list':
@@ -120,6 +123,25 @@ try {
 
             $activityService->saveWithCredits($activity, $values, $creditInput);
 
+            // The certificates are attached only now, because a new activity has no id until the
+            // save above gave it one. A rejected file does not undo the activity - it is already
+            // committed - so the refusal says so rather than pretending nothing happened.
+            $fileError = '';
+            if (ActivityFileService::isEnabled() && isset($_FILES['adm_requirements_files'])) {
+                $fileService = new ActivityFileService($gDb);
+                foreach (ActivityFileService::uploadsFrom($_FILES['adm_requirements_files']) as $upload) {
+                    try {
+                        $fileService->add($activity, $upload);
+                    } catch (Throwable $fileException) {
+                        $fileError = $fileException->getMessage();
+                        break;
+                    }
+                }
+            }
+            if ($fileError !== '') {
+                throw new Exception('PLG_REQUIREMENTS_FILES_SAVED_BUT_REJECTED', array($fileError));
+            }
+
             if ($createProvider) {
                 $plugin = PluginRegistry::requireEnabled(RequirementsPlugin::ID);
                 $activityEditUrl = SecurityUtils::encodeUrl(
@@ -152,7 +174,21 @@ try {
             (new ActivityService($gDb))->delete($activity);
             echo json_encode(array('status' => 'success'));
             break;
+
+        case 'file-delete':
+            SecurityUtils::validateCsrfToken($_POST['adm_csrf_token']);
+
+            $file = new ActivityFile($gDb);
+            $file->readDataByUuid($getFile);
+            // OrganizationScope answers a file of another organization the way it answers an
+            // unknown one, and the service asks the owning activity whether this user may edit it.
+            if ((int) $file->getValue('raf_id') === 0) {
+                throw new Exception('SYS_INVALID_PAGE_VIEW');
+            }
+            (new ActivityFileService($gDb))->delete($file);
+            echo json_encode(array('status' => 'success'));
+            break;
     }
 } catch (Throwable $e) {
-    handleException($e, in_array($getMode ?? '', array('save', 'submit', 'delete')));
+    handleException($e, in_array($getMode ?? '', array('save', 'submit', 'delete', 'file-delete')));
 }

@@ -4,8 +4,10 @@ namespace AdmidioPlugin\Requirements\Presenter;
 use Admidio\Infrastructure\Exception;
 use Admidio\Infrastructure\Utils\SecurityUtils;
 use Admidio\UI\Presenter\FormPresenter;
+use AdmidioPlugin\Requirements\Database\RequirementsTables;
 use AdmidioPlugin\Requirements\Entity\RequirementType;
 use AdmidioPlugin\Requirements\Service\FulfilmentService;
+use AdmidioPlugin\Requirements\Service\ActivityFileService;
 use AdmidioPlugin\Requirements\Service\RequirementTypeService;
 
 /**
@@ -240,6 +242,16 @@ class ReviewPresenter extends RequirementsPresenter
     ): array {
         global $gL10n;
 
+        // The evidence belongs beside the number it supports: a reviewer who has to leave the page
+        // to look at a certificate will set the accepted value without looking at it.
+        $filesByActivity = array();
+        if (ActivityFileService::isEnabled()) {
+            $filesByActivity = $this->filesFor(array_values(array_unique(array_map(
+                static fn(array $contribution): int => (int) $contribution['activityId'],
+                $member['contributions']
+            ))));
+        }
+
         $contributions = array();
         foreach ($member['contributions'] as $contribution) {
             $field = 'accepted_' . $contribution['creditId'];
@@ -263,6 +275,7 @@ class ReviewPresenter extends RequirementsPresenter
                 // A draft is reported as pending rather than counted (REQ-DEC-022), which a reviewer
                 // looking at a number that does not add up needs to be told.
                 'counts' => (bool) $contribution['counts'],
+                'files' => $filesByActivity[(int) $contribution['activityId']] ?? array(),
                 'statusText' => $gL10n->get(match ((string) $contribution['status']) {
                     'draft' => 'PLG_REQUIREMENTS_STATUS_DRAFT',
                     'withdrawn' => 'PLG_REQUIREMENTS_STATUS_WITHDRAWN',
@@ -297,6 +310,43 @@ class ReviewPresenter extends RequirementsPresenter
             ),
             'contributions' => $contributions
         );
+    }
+
+    /**
+     * The certificate files of these activities, as download links keyed by activity id.
+     *
+     * One query for the whole roster rather than one per contribution: a review page of two hundred
+     * members would otherwise open the file table two hundred times.
+     *
+     * @param array<int,int> $activityIds
+     * @return array<int,array<int,array{name:string,url:string}>>
+     * @throws Exception
+     */
+    private function filesFor(array $activityIds): array
+    {
+        global $gDb;
+
+        if ($activityIds === array()) {
+            return array();
+        }
+
+        $rows = $gDb->getArrayFromSql(
+            'SELECT raf_activity_id, raf_uuid, raf_name
+               FROM ' . RequirementsTables::activityFiles() . '
+              WHERE raf_activity_id IN (' . implode(', ', array_fill(0, count($activityIds), '?')) . ')
+           ORDER BY raf_timestamp_create, raf_id',
+            $activityIds
+        );
+
+        $byActivity = array();
+        foreach ($rows as $row) {
+            $byActivity[(int) $row['raf_activity_id']][] = array(
+                'name' => SecurityUtils::encodeHTML((string) $row['raf_name']),
+                'url' => $this->pageUrl('file.php', array('uuid' => $row['raf_uuid']))
+            );
+        }
+
+        return $byActivity;
     }
 
     /**

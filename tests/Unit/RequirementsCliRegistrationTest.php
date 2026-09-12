@@ -28,7 +28,9 @@ final class RequirementsCliRegistrationTest extends RequirementsUnitTestCase
         'requirements:report',
         // the preview writes nothing and a member may import their own activities; the writing
         // half is gated by --commit, and by ActivityService per row
-        'requirements:import'
+        'requirements:import',
+        // the evidence of one's own activity; the record check is the activity's own
+        'requirements:file-list'
     );
 
     /** Commands that change data, and therefore require administering the component. */
@@ -46,7 +48,9 @@ final class RequirementsCliRegistrationTest extends RequirementsUnitTestCase
         'requirements:activity-update',
         'requirements:activity-delete',
         'requirements:credit-set',
-        'requirements:credit-delete'
+        'requirements:credit-delete',
+        'requirements:file-add',
+        'requirements:file-remove'
     );
 
     public static function setUpBeforeClass(): void
@@ -156,6 +160,21 @@ final class RequirementsCliRegistrationTest extends RequirementsUnitTestCase
      * `--dry-run`, while `import` writes nothing until `--commit` is given - so it needs no
      * rehearsal flag, and must not silently acquire the habit of writing by default.
      */
+    /**
+     * files-gc deletes, but it is neither a per-record mutation nor rehearsable with --dry-run: it
+     * reports by default and acts only with --commit, so it is registered administrable and is the
+     * one administrable command that does not carry a dry run.
+     */
+    public function testTheGarbageCollectorReportsBeforeItDeletes(): void
+    {
+        $task = CliTaskRegistry::get('requirements:files-gc');
+
+        $this->assertNotNull($task);
+        $this->assertSame(CliTaskRegistry::ACCESS_ADMINISTRABLE, $task['componentAccess']);
+        $this->assertFalse((bool) $task['supportsDryRun']);
+        $this->assertStringContainsString('--commit', (string) $task['usage']);
+    }
+
     public function testTheVisibleCommandsThatWriteSayHowTheyAreRehearsed(): void
     {
         $withDryRun = array();
@@ -201,7 +220,7 @@ final class RequirementsCliRegistrationTest extends RequirementsUnitTestCase
         }
         sort($registered);
 
-        $expected = array_merge(self::VISIBLE, self::ADMINISTRABLE);
+        $expected = array_merge(self::VISIBLE, self::ADMINISTRABLE, array('requirements:files-gc'));
         sort($expected);
 
         $this->assertSame($expected, $registered);

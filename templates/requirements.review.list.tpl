@@ -109,6 +109,12 @@
                                                             {if not $c.counts}
                                                                 <span class="badge text-bg-secondary">{$c.statusText}</span>
                                                             {/if}
+                                                            {foreach $c.files as $f}
+                                                                <a href="{$f.url}" class="badge text-bg-light text-decoration-none"
+                                                                   title="{$f.name nofilter}">
+                                                                    <i class="bi bi-paperclip"></i> {$f.name nofilter}
+                                                                </a>
+                                                            {/foreach}
                                                         </td>
                                                         <td class="small">{$c.date}</td>
                                                         <td class="small">{$c.periodReference}</td>

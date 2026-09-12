@@ -9,6 +9,7 @@ use AdmidioPlugin\Requirements\Entity\RequirementRoleRule;
 use AdmidioPlugin\Requirements\Entity\RequirementType;
 use AdmidioPlugin\Requirements\RequirementsPlugin;
 use AdmidioPlugin\Requirements\Service\ActivityService;
+use AdmidioPlugin\Requirements\Service\ActivityFileService;
 use AdmidioPlugin\Requirements\Service\RequirementTypeService;
 use AdmidioPlugin\Requirements\Tests\Support\RequirementsDatabaseTestCase;
 use InvalidArgumentException;
@@ -26,7 +27,14 @@ require_once dirname(__DIR__) . '/Support/RequirementsDatabaseTestCase.php';
  */
 final class RequirementsCliTest extends RequirementsDatabaseTestCase
 {
-    /** @var array<int,string> import files written by a test, removed afterwards */
+    /** A minimal but genuine PDF, so the MIME sniff has something real to recognise. */
+    private const PDF = "%PDF-1.4
+1 0 obj<</Type/Catalog>>endobj
+trailer<</Root 1 0 R>>
+%%EOF
+";
+
+    /** @var array<int,string> import and certificate files written by a test, removed afterwards */
     private array $importFiles = array();
 
     protected function tearDown(): void
@@ -658,6 +666,124 @@ final class RequirementsCliTest extends RequirementsDatabaseTestCase
 
         $path = sys_get_temp_dir() . '/req_cli_import_' . uniqid('', true) . '.csv';
         file_put_contents($path, implode("\n", $lines) . "\n");
+        $this->importFiles[] = $path;
+
+        return $path;
+    }
+
+    // ---------------------------------------------------------------- certificate files
+
+    /**
+     * The CLI attaches a file through the same service the web upload uses, so the type is decided
+     * by what is in the file rather than by what it is called. A migration script feeding a
+     * directory of scanned certificates in must not be a way around the check.
+     */
+    public function testFileAddAppliesTheSameTypeCheckAsTheWebUpload(): void
+    {
+        $this->enableFiles();
+        $activity = $this->activityForFiles('cli_file_type');
+
+        $script = $this->writeFile("<?php echo 'pwned';", 'php');
+
+        try {
+            $this->runCommand('fileAdd', array((string) $activity->getValue('rqa_uuid'), $script));
+            $this->fail('a PHP script should not be attachable as a certificate');
+        } catch (Exception $exception) {
+            $this->assertStringContainsString('text/x-php', $exception->getMessage());
+        }
+
+        $this->assertSame(0, $this->countRows(RequirementsTables::activityFiles()));
+    }
+
+    public function testFileAddAndFileListRoundTrip(): void
+    {
+        $this->enableFiles();
+        $activity = $this->activityForFiles('cli_file_add');
+
+        $added = $this->runCommand('fileAdd', array(
+            (string) $activity->getValue('rqa_uuid'),
+            $this->writeFile(self::PDF, 'pdf')
+        ), array('name' => 'Course confirmation.pdf'));
+
+        $this->assertSame('application/pdf', $added[0]['mime_type']);
+        $this->assertSame('Course confirmation.pdf', $added[0]['name']);
+
+        $listed = $this->runCommand('fileList', array((string) $activity->getValue('rqa_uuid')));
+
+        $this->assertCount(1, $listed);
+        $this->assertSame($added[0]['uuid'], $listed[0]['uuid']);
+    }
+
+    /**
+     * file-list is readable by a member, and the record it may read is its own. The command is
+     * registered ACCESS_VISIBLE, so this refusal is the whole protection.
+     */
+    public function testFileListRefusesAnotherMembersActivity(): void
+    {
+        $this->enableFiles();
+        $activity = $this->activityForFiles('cli_file_owner');
+        $other = $this->createMember('cli_file_other');
+
+        $this->asMember($other['usr_id'], function () use ($activity): void {
+            $this->assertRefusedWith('SYS_NO_RIGHTS', function () use ($activity): void {
+                $this->runCommand('fileList', array((string) $activity->getValue('rqa_uuid')));
+            });
+        });
+    }
+
+    public function testFilesGcReportsBeforeItDeletes(): void
+    {
+        $this->enableFiles();
+        $activity = $this->activityForFiles('cli_file_gc');
+        $file = (new ActivityFileService($this->getDatabase()))->add(
+            $activity,
+            array(
+                'name' => 'certificate.pdf',
+                'tmp_name' => $this->writeFile(self::PDF, 'pdf'),
+                'size' => strlen(self::PDF),
+                'error' => UPLOAD_ERR_OK
+            )
+        );
+        $path = (new ActivityFileService($this->getDatabase()))->pathFor($file);
+        unlink($path);
+
+        $reported = $this->runCommand('filesGc');
+        $this->assertSame('row without file', $reported[0]['kind']);
+        $this->assertSame(1, $this->countRows(RequirementsTables::activityFiles()), 'a report deletes nothing');
+
+        $this->runCommand('filesGc', array(), array('commit' => true));
+        $this->assertSame(0, $this->countRows(RequirementsTables::activityFiles()));
+    }
+
+    /**
+     * Switch the certificate feature on for the running test.
+     */
+    private function enableFiles(): void
+    {
+        $this->enablePluginForCurrentOrganization(array(
+            ActivityFileService::SETTING_ENABLED => '1',
+            ActivityFileService::SETTING_MAX_COUNT => '5',
+            ActivityFileService::SETTING_MAX_SIZE => '10',
+            ActivityFileService::SETTING_TOTAL_QUOTA => '0'
+        ));
+    }
+
+    private function activityForFiles(string $login): Activity
+    {
+        $member = $this->createMember($login);
+        $activity = new Activity($this->getDatabase());
+        (new ActivityService($this->getDatabase()))->save($activity, array(
+            'rqa_title' => 'Course for ' . $login,
+            'rqa_begin_date' => '2026-03-01'
+        ), $member['usr_id']);
+
+        return $activity;
+    }
+
+    private function writeFile(string $content, string $extension): string
+    {
+        $path = sys_get_temp_dir() . '/req_cli_file_' . uniqid('', true) . '.' . $extension;
+        file_put_contents($path, $content);
         $this->importFiles[] = $path;
 
         return $path;

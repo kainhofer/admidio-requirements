@@ -7,10 +7,12 @@ use Admidio\Infrastructure\Exception;
 use AdmidioPlugin\Requirements\Database\RequirementsTables;
 use AdmidioPlugin\Requirements\Entity\Activity;
 use AdmidioPlugin\Requirements\Entity\ActivityCredit;
+use AdmidioPlugin\Requirements\Entity\ActivityFile;
 use AdmidioPlugin\Requirements\Entity\Provider;
 use AdmidioPlugin\Requirements\Entity\RequirementRoleRule;
 use AdmidioPlugin\Requirements\Entity\RequirementType;
 use AdmidioPlugin\Requirements\Service\ActivityService;
+use AdmidioPlugin\Requirements\Service\ActivityFileService;
 use AdmidioPlugin\Requirements\Service\FulfilmentService;
 use AdmidioPlugin\Requirements\Service\ImportService;
 use AdmidioPlugin\Requirements\Service\ProviderService;
@@ -737,6 +739,163 @@ final class RequirementsCli
             $options
         );
         return 0;
+    }
+
+    /**
+     * The certificate files of one activity. The record check is the activity's own: a member sees
+     * the evidence of their own activities and of nobody else's.
+     *
+     * @throws Exception|InvalidArgumentException
+     */
+    public static function fileList(array $arguments, array $options): int
+    {
+        global $gDb;
+
+        $activity = self::loadActivity(CliApplication::requireArgument($arguments, 0, 'activity'));
+        if (!$activity->isVisible()) {
+            throw new Exception('SYS_NO_RIGHTS');
+        }
+
+        $rows = array();
+        foreach ((new ActivityFileService($gDb))->listForActivity((int) $activity->getValue('rqa_id')) as $file) {
+            $rows[] = array(
+                'uuid' => $file['raf_uuid'],
+                'name' => $file['raf_name'],
+                'mime_type' => $file['raf_mime_type'],
+                'size' => (int) $file['raf_size']
+            );
+        }
+
+        CliApplication::writeRows($rows, CliApplication::optionString($options, 'format', 'table'), $options);
+        return 0;
+    }
+
+    /**
+     * Attach a local file, for a migration or a batch of scanned certificates.
+     *
+     * The path is read rather than moved, and it goes through the same `add()` the web upload uses -
+     * so the type is sniffed, and the size, count and quota limits apply exactly as they do there.
+     *
+     * @throws Exception|InvalidArgumentException
+     */
+    public static function fileAdd(array $arguments, array $options): int
+    {
+        global $gDb;
+
+        $activity = self::loadActivity(CliApplication::requireArgument($arguments, 0, 'activity'));
+        $path = CliApplication::requireArgument($arguments, 1, 'path');
+        if (!is_file($path) || !is_readable($path)) {
+            throw new InvalidArgumentException('The file "' . $path . '" is not readable.');
+        }
+
+        $upload = array(
+            'name' => CliApplication::optionString($options, 'name', basename($path)),
+            'tmp_name' => $path,
+            'size' => (int) filesize($path),
+            'error' => UPLOAD_ERR_OK
+        );
+
+        return self::mutate($options, function () use ($gDb, $activity, $upload): array {
+            $file = (new ActivityFileService($gDb))->add($activity, $upload);
+
+            return array(
+                'uuid' => $file->getValue('raf_uuid'),
+                'activity' => $activity->getValue('rqa_uuid'),
+                'name' => $file->getValue('raf_name'),
+                'mime_type' => $file->getValue('raf_mime_type'),
+                'size' => (int) $file->getValue('raf_size')
+            );
+        });
+    }
+
+    /**
+     * @throws Exception|InvalidArgumentException
+     */
+    public static function fileRemove(array $arguments, array $options): int
+    {
+        global $gDb;
+
+        $file = new ActivityFile($gDb, self::resolvePluginId(
+            RequirementsTables::activityFiles(),
+            'raf_id',
+            'raf_uuid',
+            CliApplication::requireArgument($arguments, 0, 'file'),
+            'File'
+        ));
+        if ((int) $file->getValue('raf_id') === 0) {
+            throw new InvalidArgumentException('The file was not found.');
+        }
+        CliApplication::confirm('Delete the file "' . $file->getValue('raf_name') . '"?', $options);
+
+        return self::mutate($options, function () use ($gDb, $file): array {
+            $row = array(
+                'uuid' => $file->getValue('raf_uuid'),
+                'name' => $file->getValue('raf_name')
+            );
+            (new ActivityFileService($gDb))->delete($file);
+            $row['deleted'] = true;
+            return $row;
+        });
+    }
+
+    /**
+     * Reconcile the table with the disk.
+     *
+     * A file lives in two places, and an interrupted write leaves one of them behind. Neither kind
+     * of debris is reachable through the UI, so nothing else would ever find it. The command
+     * reports without changing anything unless `--commit` is given, for the same reason the import
+     * does: a sweep that deletes by default is a bad first thing to run.
+     *
+     * @throws Exception|InvalidArgumentException
+     */
+    public static function filesGc(array $arguments, array $options): int
+    {
+        global $gDb;
+
+        $commit = CliApplication::optionBool($options, 'commit', false) === true;
+        $result = (new ActivityFileService($gDb))->collectGarbage(!$commit);
+
+        $rows = array();
+        foreach ($result['missingFiles'] as $uuid) {
+            $rows[] = array(
+                'kind' => 'row without file',
+                'reference' => $uuid,
+                'action' => $commit ? 'row deleted' : 'would delete the row'
+            );
+        }
+        foreach ($result['orphanFiles'] as $name) {
+            $rows[] = array(
+                'kind' => 'file without row',
+                'reference' => $name,
+                'action' => $commit ? 'file deleted' : 'would delete the file'
+            );
+        }
+        if ($rows === array()) {
+            $rows[] = array('kind' => 'nothing to do', 'reference' => '', 'action' => '');
+        }
+
+        CliApplication::writeRows($rows, CliApplication::optionString($options, 'format', 'table'), $options);
+        return 0;
+    }
+
+    /**
+     * An activity of this organization, by UUID or id.
+     *
+     * @throws Exception|InvalidArgumentException
+     */
+    private static function loadActivity(string $reference): Activity
+    {
+        global $gDb, $gCurrentOrgId;
+
+        return new Activity($gDb, self::resolvePluginId(
+            RequirementsTables::activities(),
+            'rqa_id',
+            'rqa_uuid',
+            $reference,
+            'Activity',
+            'rqa_org_id = ?',
+            array((int) $gCurrentOrgId)
+        ));
     }
 
     /**

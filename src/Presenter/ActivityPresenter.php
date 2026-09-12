@@ -2,12 +2,14 @@
 namespace AdmidioPlugin\Requirements\Presenter;
 
 use Admidio\Infrastructure\Exception;
+use Admidio\Infrastructure\Utils\FileSystemUtils;
 use Admidio\Infrastructure\Utils\SecurityUtils;
 use Admidio\UI\Presenter\FormPresenter;
 use Admidio\Users\Entity\User;
 use AdmidioPlugin\Requirements\Entity\Activity;
 use AdmidioPlugin\Requirements\Entity\RequirementType;
 use AdmidioPlugin\Requirements\Service\ActivityService;
+use AdmidioPlugin\Requirements\Service\ActivityFileService;
 use AdmidioPlugin\Requirements\Service\FulfilmentService;
 use AdmidioPlugin\Requirements\Service\ProviderService;
 use AdmidioPlugin\Requirements\Service\RequirementTypeService;
@@ -354,11 +356,15 @@ class ActivityPresenter extends RequirementsPresenter
         $textProperty = $readOnly ? FormPresenter::FIELD_READONLY : FormPresenter::FIELD_DEFAULT;
         $requiredProperty = $readOnly ? FormPresenter::FIELD_READONLY : FormPresenter::FIELD_REQUIRED;
         $choiceProperty = $readOnly ? FormPresenter::FIELD_DISABLED : FormPresenter::FIELD_DEFAULT;
+        $filesEnabled = ActivityFileService::isEnabled();
         $form = new FormPresenter(
             'adm_requirements_activity_edit_form',
             'requirements.activity.edit.tpl',
             $this->pageUrl('index.php', array('mode' => 'save', 'uuid' => $activityUUID)),
-            $this
+            $this,
+            // Without this the form is urlencoded and $_FILES stays empty, so the upload field
+            // would render and silently do nothing.
+            array('enableFileUpload' => $filesEnabled && !$readOnly)
         );
 
         $form->addInput('rqa_title', $gL10n->get('SYS_TITLE'), (string) $activity->getValue('rqa_title'),
@@ -562,6 +568,8 @@ class ActivityPresenter extends RequirementsPresenter
             $form->addSubmitButton('adm_button_save', $gL10n->get('SYS_SAVE'), array('icon' => 'bi-check-lg'));
         }
 
+        $this->assignCertificates($form, $activity, $filesEnabled, $readOnly);
+
         $this->assignSmartyVariable('readOnly', $readOnly);
         $this->assignSmartyVariable('creditFields', $creditFields);
         $this->assignSmartyVariable('showReview', $isAdmin);
@@ -576,6 +584,78 @@ class ActivityPresenter extends RequirementsPresenter
     /**
      * Combine a stored date and time into the "Y-m-d H:i" value a datetime form field expects.
      */
+    /**
+     * The "certificates" card: what is already attached, and the field that attaches more.
+     *
+     * A new activity has no id yet, so it has no files to list - but its upload field is still
+     * offered, because `index.php?mode=save` creates the activity first and attaches afterwards,
+     * inside the same request. Asking the member to save and come back would be a worse answer to
+     * a form they have already filled in.
+     *
+     * @throws Exception
+     */
+    private function assignCertificates(
+        FormPresenter $form,
+        Activity $activity,
+        bool $filesEnabled,
+        bool $readOnly
+    ): void {
+        global $gDb, $gL10n;
+
+        $this->assignSmartyVariable('showFiles', $filesEnabled);
+        $this->assignSmartyVariable('files', array());
+        $this->assignSmartyVariable('filesUploadable', false);
+        if (!$filesEnabled) {
+            return;
+        }
+
+        $activityId = (int) $activity->getValue('rqa_id');
+        $files = array();
+        if ($activityId > 0) {
+            foreach ((new ActivityFileService($gDb))->listForActivity($activityId) as $file) {
+                $rowId = 'adm_requirements_file_' . $file['raf_uuid'];
+                $files[] = array(
+                    'id' => $rowId,
+                    'name' => SecurityUtils::encodeHTML((string) $file['raf_name']),
+                    'size' => FileSystemUtils::getHumanReadableBytes((int) $file['raf_size']),
+                    'url' => $this->pageUrl('file.php', array('uuid' => $file['raf_uuid'])),
+                    'deleteAction' => $readOnly ? null : $this->deleteAction(
+                        $rowId,
+                        $this->pageUrl('index.php', array(
+                            'mode' => 'file-delete',
+                            'uuid' => (string) $activity->getValue('rqa_uuid'),
+                            'file' => $file['raf_uuid']
+                        )),
+                        $gL10n->get('SYS_WANT_DELETE_ENTRY', array($file['raf_name']))
+                    )
+                );
+            }
+        }
+
+        if (!$readOnly) {
+            // The types this organization allows, not every type the plugin could store, so the
+            // file picker offers what the upload would actually accept.
+            $allowed = ActivityFileService::allowedMimeTypes();
+            $form->addFileUpload('adm_requirements_files', $gL10n->get('PLG_REQUIREMENTS_FILES_ADD'), array(
+                'enableMultiUploads' => true,
+                'multiUploadLabel' => $gL10n->get('PLG_REQUIREMENTS_FILES_ADD_ANOTHER'),
+                'allowedMimeTypes' => array_keys($allowed)
+            ));
+            $form->addDescription('adm_requirements_files_help', $gL10n->get(
+                'PLG_REQUIREMENTS_FILES_ADD_HELP',
+                array(
+                    implode(', ', $allowed),
+                    (int) RequirementsPlugin::setting(ActivityFileService::SETTING_MAX_SIZE),
+                    (int) RequirementsPlugin::setting(ActivityFileService::SETTING_MAX_COUNT)
+                )
+            ));
+        }
+
+        $this->assignSmartyVariable('files', $files);
+        $this->assignSmartyVariable('filesUploadable', !$readOnly);
+        $this->assignSmartyVariable('filesNone', $gL10n->get('PLG_REQUIREMENTS_FILES_NONE'));
+    }
+
     private static function dateTimeValue(string $date, string $time): string
     {
         if ($date === '') {

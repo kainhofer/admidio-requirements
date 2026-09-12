@@ -406,3 +406,58 @@ CliTaskRegistry::register(
     array(),
     CliTaskRegistry::ACCESS_VISIBLE
 );
+
+/*
+ * Certificate files. file-list is readable by the member the activity belongs to, the rest change
+ * data. files-gc reports by default and deletes only with --commit, because a sweep whose default
+ * is to delete is a bad first thing to run against a live installation.
+ */
+CliTaskRegistry::register(
+    'requirements:file-list',
+    RequirementsPlugin::ID,
+    array(RequirementsCli::class, 'fileList'),
+    'List the certificate files of an activity.',
+    'requirements:file-list ACTIVITY [--format=FORMAT]',
+    array($arg('activity', 'Activity UUID or id.')),
+    array($format),
+    array(),
+    CliTaskRegistry::ACCESS_VISIBLE
+);
+CliTaskRegistry::register(
+    'requirements:file-add',
+    RequirementsPlugin::ID,
+    array(RequirementsCli::class, 'fileAdd'),
+    'Attach a local file to an activity, with the same checks as the web upload.',
+    'requirements:file-add ACTIVITY PATH [--name=NAME] [--dry-run]',
+    array(
+        $arg('activity', 'Activity UUID or id.'),
+        $arg('path', 'Path to the file to attach.')
+    ),
+    array($opt('name', 'Display name; defaults to the file name.', 'NAME'), $format),
+    array(),
+    CliTaskRegistry::ACCESS_ADMINISTRABLE,
+    true
+);
+CliTaskRegistry::register(
+    'requirements:file-remove',
+    RequirementsPlugin::ID,
+    array(RequirementsCli::class, 'fileRemove'),
+    'Delete one certificate file.',
+    'requirements:file-remove FILE --yes [--dry-run]',
+    array($arg('file', 'File UUID or id.')),
+    array($format),
+    array(),
+    CliTaskRegistry::ACCESS_ADMINISTRABLE,
+    true
+);
+CliTaskRegistry::register(
+    'requirements:files-gc',
+    RequirementsPlugin::ID,
+    array(RequirementsCli::class, 'filesGc'),
+    'Report rows whose file is missing and files no row points at. Deletes them with --commit.',
+    'requirements:files-gc [--commit] [--format=FORMAT]',
+    array(),
+    array($opt('commit', 'Actually delete what is reported.', '', false, false, true), $format),
+    array(),
+    CliTaskRegistry::ACCESS_ADMINISTRABLE
+);

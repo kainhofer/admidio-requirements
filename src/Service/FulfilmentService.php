@@ -1341,7 +1341,7 @@ final class FulfilmentService
         }
 
         $statement = $this->db->queryPrepared(
-            'SELECT rqa.rqa_user_id, rqa.rqa_uuid, rqa.rqa_title, rqa.rqa_begin_date, rqa.rqa_status,
+            'SELECT rqa.rqa_id, rqa.rqa_user_id, rqa.rqa_uuid, rqa.rqa_title, rqa.rqa_begin_date, rqa.rqa_status,
                     rac.rac_id, rac.rac_uuid, rac.rac_period_reference,
                     rac.rac_credits_claimed, rac.rac_credits_accepted
                FROM ' . RequirementsTables::activityCredits() . ' AS rac
@@ -1361,6 +1361,7 @@ final class FulfilmentService
             $effective = $row['rac_credits_accepted'] === null
                 ? (float)$row['rac_credits_claimed'] : (float)$row['rac_credits_accepted'];
             $credits[(int)$row['rqa_user_id']][] = array(
+                'activityId' => (int)$row['rqa_id'],
                 'activityUuid' => (string)$row['rqa_uuid'],
                 'creditId' => (int)$row['rac_id'],
                 'creditUuid' => (string)$row['rac_uuid'],

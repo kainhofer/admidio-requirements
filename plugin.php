@@ -18,6 +18,7 @@ use Admidio\Infrastructure\Plugins\PluginRegistry;
 use Admidio\Infrastructure\Utils\SecurityUtils;
 use AdmidioPlugin\Requirements\Entity\Activity;
 use AdmidioPlugin\Requirements\Entity\ActivityCredit;
+use AdmidioPlugin\Requirements\Entity\ActivityFile;
 use AdmidioPlugin\Requirements\Entity\Provider;
 use AdmidioPlugin\Requirements\Entity\RequirementRoleRule;
 use AdmidioPlugin\Requirements\Entity\RequirementType;
@@ -32,7 +33,8 @@ ChangelogService::registerCallback('getTableLabelArray', '', array(
     'req_activities' => 'PLG_REQUIREMENTS_ACTIVITIES',
     'req_requirement_types' => 'PLG_REQUIREMENTS_REQUIREMENT_TYPES',
     'req_requirement_role_rules' => 'PLG_REQUIREMENTS_ROLE_RULES',
-    'req_activity_credits' => 'PLG_REQUIREMENTS_ACTIVITY_CREDITS'
+    'req_activity_credits' => 'PLG_REQUIREMENTS_ACTIVITY_CREDITS',
+    'req_activity_files' => 'PLG_REQUIREMENTS_FILES'
 ));
 
 ChangelogService::registerCallback('getAreaArray', '', array(
@@ -45,7 +47,8 @@ ChangelogService::registerCallback('getAreaArray', '', array(
             'req_activities',
             'req_requirement_types',
             'req_requirement_role_rules',
-            'req_activity_credits'
+            'req_activity_credits',
+            'req_activity_files'
         )
     )
 ));
@@ -78,6 +81,14 @@ ChangelogService::registerCallback(
     static function (): Activity {
         global $gDb;
         return new Activity($gDb);
+    }
+);
+ChangelogService::registerCallback(
+    'getObjectForTable',
+    'req_activity_files',
+    static function (): ActivityFile {
+        global $gDb;
+        return new ActivityFile($gDb);
     }
 );
 ChangelogService::registerCallback(
@@ -181,6 +192,30 @@ ChangelogService::registerCallback(
     }
 );
 
+ChangelogService::registerCallback(
+    'createLink',
+    'req_activity_files',
+    static function (string $text, string $module, int|string $id, string $uuid = ''): string {
+        global $gDb;
+
+        // A certificate is managed on its activity, so the link needs the activity it belongs to.
+        $file = new ActivityFile($gDb, (int) $id);
+        if ((int) $file->getValue('raf_id') === 0) {
+            return '';
+        }
+        $activity = new Activity($gDb, (int) $file->getValue('raf_activity_id'));
+        $plugin = PluginRegistry::get(RequirementsPlugin::ID);
+        if ($plugin === null || (int) $activity->getValue('rqa_id') === 0) {
+            return '';
+        }
+
+        return SecurityUtils::encodeUrl(
+            $plugin->getUrl('index.php'),
+            array('mode' => 'edit', 'uuid' => $activity->getValue('rqa_uuid'))
+        );
+    }
+);
+
 // The requirements right, not the generic organization-administrator flag: a site that delegates
 // requirements administration through the component right would otherwise be denied its own change
 // history, while an administrator who was never given that right would be granted it.
@@ -202,6 +237,7 @@ ChangelogService::registerCallback('getPermittedTables', '', static function ($u
         'req_activities',
         'req_requirement_types',
         'req_requirement_role_rules',
-        'req_activity_credits'
+        'req_activity_credits',
+        'req_activity_files'
     );
 });

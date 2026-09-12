@@ -28,6 +28,11 @@ final class RequirementsTables
         return TABLE_PREFIX . '_req_activity_credits';
     }
 
+    public static function activityFiles(): string
+    {
+        return TABLE_PREFIX . '_req_activity_files';
+    }
+
     private function __construct()
     {
     }

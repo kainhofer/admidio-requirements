@@ -115,6 +115,37 @@
         </div>
     {/if}
 
+    {if $showFiles}
+        <div class="card admidio-field-group">
+            <div class="card-header">{$l10n->get('PLG_REQUIREMENTS_FILES')}</div>
+            <div class="card-body">
+                {if $files|@count eq 0}
+                    <p class="text-muted mb-3">{$filesNone}</p>
+                {else}
+                    <ul class="list-group list-group-flush mb-3">
+                        {foreach $files as $file}
+                            <li class="list-group-item d-flex justify-content-between align-items-center px-0" id="{$file.id}">
+                                <span>
+                                    <i class="bi bi-paperclip"></i>
+                                    <a href="{$file.url}">{$file.name nofilter}</a>
+                                    <span class="text-muted small">({$file.size})</span>
+                                </span>
+                                {if $file.deleteAction}
+                                    <span>{include 'sys-template-parts/list.functions.tpl' data=['actions' => [$file.deleteAction]]}</span>
+                                {/if}
+                            </li>
+                        {/foreach}
+                    </ul>
+                {/if}
+
+                {if $filesUploadable}
+                    {include 'sys-template-parts/form.file.tpl' data=$elements['adm_requirements_files']}
+                    {include 'sys-template-parts/form.description.tpl' data=$elements['adm_requirements_files_help']}
+                {/if}
+            </div>
+        </div>
+    {/if}
+
     <div class="card admidio-field-group">
         <div class="card-header">{$l10n->get('SYS_COMMENT')}{if $showReview} &amp; {$l10n->get('PLG_REQUIREMENTS_REVIEW_STATUS')}{/if}</div>
         <div class="card-body">
