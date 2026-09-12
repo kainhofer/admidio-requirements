@@ -106,13 +106,10 @@ abstract class RequirementsDatabaseTestCase extends AdministratorTestCase
      */
     protected static function runSchemaScript(Database $db, string $path): void
     {
-        $sql = file_get_contents($path);
-        if ($sql === false) {
-            throw new \RuntimeException('Cannot read ' . $path);
-        }
-
-        $sql = str_replace('%PREFIX%', TABLE_PREFIX, $sql);
-        foreach (array_filter(array_map('trim', explode(';', $sql))) as $statement) {
+        // The same splitter the installer uses, so a script that works here works there. Splitting
+        // on every semicolon instead would accept a file the real install would choke on - one with
+        // a semicolon inside a comment, say.
+        foreach (Database::getSqlStatementsFromSqlFile($path) as $statement) {
             // showError() would end the process rather than fail the test, so the failure is
             // turned into an exception that names the statement that could not be run.
             if ($db->queryPrepared($statement, array(), false) === false) {
