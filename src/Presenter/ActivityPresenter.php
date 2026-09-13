@@ -192,13 +192,17 @@ class ActivityPresenter extends RequirementsPresenter
             $typeEntity = new RequirementType($gDb);
             $typeEntity->setArray($selectedType);
             try {
-                $periodFilter = FulfilmentService::normalizePeriodReference($typeEntity, $period);
-                $parts = FulfilmentService::periodControlValue($selectedKind, $periodFilter);
-                $periodLabel = $parts['quarter'] !== ''
-                    ? $parts['value'] . ' Q' . $parts['quarter']
-                    : $parts['value'];
+                // The link carries the unit the period opens in; the period itself may be a rolling
+                // window of several units, so the filter is the whole window and the label says so.
+                $opens = FulfilmentService::normalizePeriodReference($typeEntity, $period);
+                [$windowStart, $windowEnd, $periodLabel] = FulfilmentService::periodFor(
+                    $typeEntity,
+                    new \DateTimeImmutable($opens)
+                );
+                $periodFilter = array($windowStart->format('Y-m-d'), $windowEnd->format('Y-m-d'));
             } catch (Exception) {
                 $periodFilter = null;
+                $periodLabel = '';
             }
         }
         $this->assignSmartyVariable('periodLabel', $periodLabel);

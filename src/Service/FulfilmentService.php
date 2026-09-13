@@ -13,6 +13,9 @@ use DateTimeImmutable;
 
 final class FulfilmentService
 {
+    /** How the two ends of a rolling window are joined in a label. */
+    private const PERIOD_RANGE_SEPARATOR = ' - ';
+
     public function __construct(private readonly Database $db)
     {
     }
@@ -79,7 +82,7 @@ final class FulfilmentService
             $credits = $this->loadCredits(
                 $userId,
                 (int)$type->getValue('rqt_id'),
-                $periodStart->format('Y-m-d')
+                array($periodStart->format('Y-m-d'), $periodEnd->format('Y-m-d'))
             );
             [$attained, $pending] = self::sumCredits($credits);
             if ($required <= 0.0 && $credits === array() && !$hasRule) {
@@ -391,11 +394,10 @@ final class FulfilmentService
                 continue;
             }
 
-            if ((int) $type->getValue('rqt_period_count') !== 1) {
-                continue;
-            }
-
-            // Walk back whole periods from the start of the running one, so no period is skipped.
+            // Walk back one unit at a time from the unit the running period opens in, so no period
+            // is skipped. With a count above one the windows overlap, which is the point: a member
+            // sees the window that closes next and the one that opened this unit side by side, and
+            // both are still open.
             $unit = (string) $type->getValue('rqt_period_unit');
             [$anchor, $stepSize, $stepUnit] = match ($unit) {
                 'quarter' => array(self::periodFor($type, $today)[0], 3, 'months'),
@@ -448,7 +450,11 @@ final class FulfilmentService
             $periodEnd
         );
 
-        $credits = $this->loadCredits($userId, (int) $type->getValue('rqt_id'), $periodStart->format('Y-m-d'));
+        $credits = $this->loadCredits(
+            $userId,
+            (int) $type->getValue('rqt_id'),
+            array($periodStart->format('Y-m-d'), $periodEnd->format('Y-m-d'))
+        );
         [$attained, $pending] = self::sumCredits($credits);
 
         return array(
@@ -521,7 +527,7 @@ final class FulfilmentService
 
         // A recurring requirement has no period to filter the contributions by: its cycles are found
         // by walking all of them in order.
-        $creditPeriod = $calendar ? $start->format('Y-m-d') : null;
+        $creditPeriod = $calendar ? array($start->format('Y-m-d'), $end->format('Y-m-d')) : null;
         $candidates = $this->reviewCandidates($roleIds, $typeId, $start, $end, $creditPeriod);
         $userIds = array_keys($candidates);
         $memberships = $this->membershipsForUsers($userIds, $roleIds, $start, $end);
@@ -611,7 +617,7 @@ final class FulfilmentService
      * through their own column, so a member of another organization can never enter the roster.
      *
      * @param array<int,int> $roleIds
-     * @param string|null $periodReference restrict the credit half to one credited period
+     * @param array{0:string,1:string}|null $periodRange restrict the credit half to one window
      * @return array<int,array{userId:int,userUuid:string,firstName:string,lastName:string,name:string}>
      *         keyed by user id, ordered by name
      * @throws Exception
@@ -621,7 +627,7 @@ final class FulfilmentService
         int $requirementTypeId,
         DateTimeImmutable $start,
         DateTimeImmutable $end,
-        ?string $periodReference
+        ?array $periodRange
     ): array {
         global $gCurrentOrgId, $gProfileFields;
 
@@ -651,9 +657,10 @@ final class FulfilmentService
         $params[] = (int) $gCurrentOrgId;
         $params[] = $requirementTypeId;
         $params[] = 'withdrawn';
-        if ($periodReference !== null) {
-            $creditCondition .= ' AND rac.rac_period_reference = ?';
-            $params[] = $periodReference;
+        if ($periodRange !== null) {
+            $creditCondition .= ' AND rac.rac_period_reference BETWEEN ? AND ?';
+            $params[] = $periodRange[0];
+            $params[] = $periodRange[1];
         }
         $conditions[] = $creditCondition . ')';
 
@@ -890,48 +897,65 @@ final class FulfilmentService
     }
 
     /**
-     * The period that contains $reference, from the two stored values rather than from a record.
+     * The period named by the unit that contains $reference (REQ-DEC-014).
+     *
+     * With a count of one a period is a single unit, and the units partition time: 2026 is one
+     * year, and every credit belongs to exactly one of them.
+     *
+     * With a count above one a period is a **rolling window** of that many units, named by the unit
+     * it opens in. Two years means "sixteen hours in every two-year window", so 2026 opens the
+     * window 2026-2027 while still sitting inside the window 2025-2026 that opened a year earlier.
+     * Each unit therefore belongs to `count` windows and each window overlaps its neighbours - a
+     * credit is not moved or duplicated for this, it stays booked to its own unit and the windows
+     * are ranges of units, which is why nothing about how a credit is stored changes.
+     *
+     * The window is named by its opening unit rather than its closing one so that the name is a
+     * date that already exists: `rac_period_reference` is a unit start, and so is a window's
+     * identity, which keeps the credited-period control and normalizePeriodReference() unchanged.
      *
      * @return array{0:DateTimeImmutable,1:DateTimeImmutable,2:string} start, end (inclusive), label
-     * @throws Exception PLG_REQUIREMENTS_CALENDAR_MULTI_PERIOD_UNSUPPORTED for a count above one
+     * @throws Exception SYS_INVALID_PAGE_VIEW for an unknown unit
      */
     public static function periodForUnit(string $unit, int $count, DateTimeImmutable $reference): array
     {
-        if ($count !== 1) {
-            throw new Exception('PLG_REQUIREMENTS_CALENDAR_MULTI_PERIOD_UNSUPPORTED');
-        }
+        $count = max(1, $count);
 
         switch ($unit) {
             case 'year':
                 $start = $reference->setDate((int)$reference->format('Y'), 1, 1);
-                $end = $start->modify('+1 year -1 day');
-                $label = $start->format('Y');
+                $step = '+' . $count . ' years';
+                $name = static fn(DateTimeImmutable $date): string => $date->format('Y');
                 break;
 
             case 'quarter':
                 $month = (int)$reference->format('n');
-                $quarter = intdiv($month - 1, 3) + 1;
-                $startMonth = (($quarter - 1) * 3) + 1;
+                $startMonth = (intdiv($month - 1, 3) * 3) + 1;
                 $start = $reference->setDate((int)$reference->format('Y'), $startMonth, 1);
-                $end = $start->modify('+3 months -1 day');
-                $label = 'Q' . $quarter . ' ' . $start->format('Y');
+                $step = '+' . (3 * $count) . ' months';
+                $name = static fn(DateTimeImmutable $date): string =>
+                    'Q' . (intdiv((int)$date->format('n') - 1, 3) + 1) . ' ' . $date->format('Y');
                 break;
 
             case 'month':
                 $start = $reference->modify('first day of this month');
-                $end = $start->modify('+1 month -1 day');
-                $label = $start->format('Y-m');
+                $step = '+' . $count . ' months';
+                $name = static fn(DateTimeImmutable $date): string => $date->format('Y-m');
                 break;
 
             case 'week':
                 $start = $reference->modify('monday this week');
-                $end = $start->modify('+6 days');
-                $label = $start->format('o-\WW');
+                $step = '+' . (7 * $count) . ' days';
+                $name = static fn(DateTimeImmutable $date): string => $date->format('o-\WW');
                 break;
 
             default:
                 throw new Exception('SYS_INVALID_PAGE_VIEW');
         }
+
+        $end = $start->modify($step)->modify('-1 day');
+        // A single unit reads as itself, a window as the units it spans - "2026-2027" rather than
+        // "2026", so that a filter or a bar says which window it is and not merely where it began.
+        $label = $count === 1 ? $name($start) : $name($start) . self::PERIOD_RANGE_SEPARATOR . $name($end);
 
         return array(
             self::date($start->format('Y-m-d')),
@@ -1285,9 +1309,12 @@ final class FulfilmentService
     /**
      * @return array<int,array<string,mixed>>
      */
-    private function loadCredits(int $userId, int $requirementTypeId, string $periodReference): array
+    /**
+     * @param array{0:string,1:string} $periodRange the window the credits have to fall in
+     */
+    private function loadCredits(int $userId, int $requirementTypeId, array $periodRange): array
     {
-        return $this->readCredits($userId, $requirementTypeId, $periodReference);
+        return $this->readCredits($userId, $requirementTypeId, $periodRange);
     }
 
     /**
@@ -1306,9 +1333,9 @@ final class FulfilmentService
     /**
      * @return array<int,array<string,mixed>>
      */
-    private function readCredits(int $userId, int $requirementTypeId, ?string $periodReference): array
+    private function readCredits(int $userId, int $requirementTypeId, ?array $periodRange): array
     {
-        return $this->readCreditsForUsers(array($userId), $requirementTypeId, $periodReference)[$userId] ?? array();
+        return $this->readCreditsForUsers(array($userId), $requirementTypeId, $periodRange)[$userId] ?? array();
     }
 
     /**
@@ -1322,7 +1349,7 @@ final class FulfilmentService
     private function readCreditsForUsers(
         array $userIds,
         int $requirementTypeId,
-        ?string $periodReference
+        ?array $periodRange
     ): array {
         global $gCurrentOrgId;
 
@@ -1335,9 +1362,13 @@ final class FulfilmentService
             $userIds
         );
         $periodCondition = '';
-        if ($periodReference !== null) {
-            $periodCondition = ' AND rac.rac_period_reference = ?';
-            $params[] = $periodReference;
+        if ($periodRange !== null) {
+            // A range rather than an equality, because a period may be a rolling window of several
+            // units and a credit is booked to the one unit it happened in. With a count of one the
+            // two ends are the same unit and this asks exactly what an equality asked.
+            $periodCondition = ' AND rac.rac_period_reference BETWEEN ? AND ?';
+            $params[] = $periodRange[0];
+            $params[] = $periodRange[1];
         }
 
         $statement = $this->db->queryPrepared(

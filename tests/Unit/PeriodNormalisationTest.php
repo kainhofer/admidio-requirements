@@ -64,12 +64,76 @@ final class PeriodNormalisationTest extends RequirementsUnitTestCase
         $this->assertSame('2026-01-04', $end->format('Y-m-d'));
     }
 
-    public function testCalendarPeriodCountAboveOneIsRejected(): void
+    /**
+     * REQ-DEC-014. A count above one makes the period a rolling window named by the unit it opens
+     * in, so 2026 opens 2026-2027 rather than being swallowed by a fixed block.
+     */
+    public function testACountAboveOneOpensAWindowAtTheUnitOfTheReference(): void
     {
-        $this->expectException(Exception::class);
-        $this->expectExceptionMessage('PLG_REQUIREMENTS_CALENDAR_MULTI_PERIOD_UNSUPPORTED');
+        [$start, $end, $label] = FulfilmentService::periodForUnit('year', 2, new DateTimeImmutable('2026-07-14'));
 
-        FulfilmentService::periodForUnit('year', 2, new DateTimeImmutable('2026-07-14'));
+        $this->assertSame('2026-01-01', $start->format('Y-m-d'));
+        $this->assertSame('2027-12-31', $end->format('Y-m-d'));
+        $this->assertSame('2026 - 2027', $label);
+    }
+
+    /**
+     * The windows overlap, which is the whole point: any given year is inside `count` of them, so
+     * "sixteen hours in every two-year window" constrains 2025-2026 and 2026-2027 at once.
+     */
+    public function testConsecutiveUnitsOpenOverlappingWindows(): void
+    {
+        [$earlier] = FulfilmentService::periodForUnit('year', 2, new DateTimeImmutable('2025-03-01'));
+        [$later, $laterEnd] = FulfilmentService::periodForUnit('year', 2, new DateTimeImmutable('2026-03-01'));
+
+        $this->assertSame('2025-01-01', $earlier->format('Y-m-d'));
+        $this->assertSame('2026-01-01', $later->format('Y-m-d'));
+        $this->assertSame('2027-12-31', $laterEnd->format('Y-m-d'));
+    }
+
+    /**
+     * @return array<string,array{0:string,1:int,2:string,3:string,4:string,5:string}>
+     */
+    public static function windows(): array
+    {
+        return array(
+            'two years' => array('year', 2, '2026-07-14', '2026-01-01', '2027-12-31', '2026 - 2027'),
+            'three quarters' => array('quarter', 3, '2026-07-14', '2026-07-01', '2027-03-31', 'Q3 2026 - Q1 2027'),
+            'six months' => array('month', 6, '2026-07-14', '2026-07-01', '2026-12-31', '2026-07 - 2026-12'),
+            'four weeks' => array('week', 4, '2026-07-14', '2026-07-13', '2026-08-09', '2026-W29 - 2026-W32'),
+            'a single year is still one unit' => array('year', 1, '2026-07-14', '2026-01-01', '2026-12-31', '2026')
+        );
+    }
+
+    /**
+     * @dataProvider windows
+     */
+    public function testAWindowSpansItsUnitsWhateverTheUnitIs(
+        string $unit,
+        int $count,
+        string $reference,
+        string $expectedStart,
+        string $expectedEnd,
+        string $expectedLabel
+    ): void {
+        [$start, $end, $label] = FulfilmentService::periodForUnit($unit, $count, new DateTimeImmutable($reference));
+
+        $this->assertSame($expectedStart, $start->format('Y-m-d'));
+        $this->assertSame($expectedEnd, $end->format('Y-m-d'));
+        $this->assertSame($expectedLabel, $label);
+    }
+
+    /**
+     * A credit is booked to the single unit it happened in, never to the window - otherwise two
+     * years of credits would collapse into one bucket and the overlap could not be computed.
+     */
+    public function testACreditIsStillSnappedToItsOwnUnit(): void
+    {
+        [$unitStart] = FulfilmentService::periodForUnit('year', 1, new DateTimeImmutable('2027-05-09'));
+        [$windowStart] = FulfilmentService::periodForUnit('year', 2, new DateTimeImmutable('2027-05-09'));
+
+        $this->assertSame('2027-01-01', $unitStart->format('Y-m-d'));
+        $this->assertSame($unitStart->format('Y-m-d'), $windowStart->format('Y-m-d'));
     }
 
     public function testAnUnknownPeriodUnitIsRejected(): void

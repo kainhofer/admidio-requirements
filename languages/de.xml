@@ -12,7 +12,6 @@
   <string name="PLG_REQUIREMENTS_ANCHOR_LAST_FULFILMENT">Wiederkehrend ab der letzten Erfüllung</string>
   <string name="PLG_REQUIREMENTS_ATTENDANCE">Anwesenheitsstunden</string>
   <string name="PLG_REQUIREMENTS_BEGIN_DATE">Beginndatum</string>
-  <string name="PLG_REQUIREMENTS_CALENDAR_MULTI_PERIOD_UNSUPPORTED">Kalenderzeiträume mit einer Anzahl größer als eins werden noch nicht unterstützt, da ihr Ausrichtungsanker nicht definiert ist.</string>
   <string name="PLG_REQUIREMENTS_CERTIFICATE_DATE">Zertifikatsdatum</string>
   <string name="PLG_REQUIREMENTS_CERTIFICATE_DATE_HELP">Optionales Datum auf dem Zertifikat, z. B. das Prüfungsdatum.</string>
   <string name="PLG_REQUIREMENTS_CONTRIBUTIONS_OF">Es werden nur die Aktivitäten von #VAR1# angezeigt.</string>

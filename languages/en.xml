@@ -12,7 +12,6 @@
   <string name="PLG_REQUIREMENTS_ANCHOR_LAST_FULFILMENT">Recurring after the last fulfilment</string>
   <string name="PLG_REQUIREMENTS_ATTENDANCE">Attendance hours</string>
   <string name="PLG_REQUIREMENTS_BEGIN_DATE">Begin date</string>
-  <string name="PLG_REQUIREMENTS_CALENDAR_MULTI_PERIOD_UNSUPPORTED">Calendar periods with a count greater than one are not supported yet because their alignment anchor is not defined.</string>
   <string name="PLG_REQUIREMENTS_CERTIFICATE_DATE">Certificate date</string>
   <string name="PLG_REQUIREMENTS_CERTIFICATE_DATE_HELP">Optional date shown on the certificate, for example the examination date.</string>
   <string name="PLG_REQUIREMENTS_CONTRIBUTIONS_OF">Only the activities of #VAR1# are shown.</string>

@@ -488,19 +488,25 @@ final class RequirementsServiceTest extends RequirementsDatabaseTestCase
 
     // ---------------------------------------------------------------- requirement types and rules
 
-    public function testACalendarRequirementWithACountAboveOneIsRefused(): void
+    /**
+     * REQ-DEC-014: a calendar count above one is a rolling window and is accepted. It used to be
+     * refused at write time, because no alignment had been defined for it.
+     */
+    public function testACalendarRequirementMayCountSeveralUnits(): void
     {
-        $this->assertRefusedWith('PLG_REQUIREMENTS_CALENDAR_MULTI_PERIOD_UNSUPPORTED', function (): void {
-            (new RequirementTypeService($this->getDatabase()))->saveType(
-                new RequirementType($this->getDatabase()),
-                array(
-                    'rqt_name' => 'Every two years',
-                    'rqt_period_unit' => 'year',
-                    'rqt_period_count' => 2,
-                    'rqt_period_anchor' => 'calendar'
-                )
-            );
-        });
+        $type = new RequirementType($this->getDatabase());
+        (new RequirementTypeService($this->getDatabase()))->saveType(
+            $type,
+            array(
+                'rqt_name' => 'Every two years',
+                'rqt_period_unit' => 'year',
+                'rqt_period_count' => 2,
+                'rqt_period_anchor' => 'calendar'
+            )
+        );
+
+        $this->assertGreaterThan(0, (int) $type->getValue('rqt_id'));
+        $this->assertSame(2, (int) $type->getValue('rqt_period_count'));
     }
 
     public function testTwoRequirementTypesCannotShareAShortName(): void

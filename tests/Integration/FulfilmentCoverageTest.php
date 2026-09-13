@@ -283,14 +283,14 @@ final class FulfilmentCoverageTest extends RequirementsDatabaseTestCase
         $all = array_column($service->findActivities($member['usr_id'], '', $typeId), 'rqa_title');
         $this->assertContains('Uncredited', $all, 'Without a period the whole list is shown.');
 
-        $of2026 = $service->findActivities($member['usr_id'], '', $typeId, '2026-01-01');
+        $of2026 = $service->findActivities($member['usr_id'], '', $typeId, array('2026-01-01', '2026-12-31'));
         $this->assertSame(array('Course on 2026-03-01'), array_column($of2026, 'rqa_title'));
         $this->assertSame(4.0, (float) $of2026[0]['rac_credits_claimed']);
 
-        $of2025 = $service->findActivities($member['usr_id'], '', $typeId, '2025-01-01');
+        $of2025 = $service->findActivities($member['usr_id'], '', $typeId, array('2025-01-01', '2025-12-31'));
         $this->assertSame(array('Course on 2025-03-01'), array_column($of2025, 'rqa_title'));
 
-        $this->assertSame(array(), $service->findActivities($member['usr_id'], '', $typeId, '2020-01-01'));
+        $this->assertSame(array(), $service->findActivities($member['usr_id'], '', $typeId, array('2020-01-01', '2020-12-31')));
     }
 
     /**
@@ -305,7 +305,7 @@ final class FulfilmentCoverageTest extends RequirementsDatabaseTestCase
 
         $row = $this->coverage($member['usr_id'], $type);
         $detail = (new ActivityService($this->getDatabase()))
-            ->findActivities($member['usr_id'], '', (int) $type->getValue('rqt_id'), '2026-01-01');
+            ->findActivities($member['usr_id'], '', (int) $type->getValue('rqt_id'), array('2026-01-01', '2026-12-31'));
 
         $this->assertSame(7.5, $row['attained']);
         $this->assertSame(7.5, array_sum(array_map('floatval', array_column($detail, 'rac_credits_claimed'))));
@@ -439,6 +439,87 @@ final class FulfilmentCoverageTest extends RequirementsDatabaseTestCase
     /**
      * @return array<string,mixed> the coverage row of one requirement type
      */
+    // ---------------------------------------------------------------- rolling windows
+
+    /**
+     * REQ-DEC-014, and the property the whole rolling-window reading rests on: one credit counts in
+     * every window that contains its unit. "Sixteen hours in every two-year window" is satisfied by
+     * eight hours a year, and the 2026 credit therefore has to be found by 2025-2026 and by
+     * 2026-2027 alike - not moved from one to the other, and not counted once and then gone.
+     */
+    public function testOneCreditCountsInEveryWindowThatContainsItsYear(): void
+    {
+        $member = $this->createMember('req_cov_rolling');
+        $type = $this->createRequirement('CPD', $member['rol_id'], 16.0, array(), array(
+            'rqt_period_unit' => 'year',
+            'rqt_period_count' => 2
+        ));
+
+        $this->createCreditedActivity($member['usr_id'], $type, '2025-05-01', 8.0);
+        $this->createCreditedActivity($member['usr_id'], $type, '2026-05-01', 8.0);
+
+        // The window that opened in 2025 holds both years and is therefore met.
+        $opened2025 = $this->findCoverage($member['usr_id'], $type, '2025-05-01');
+        $this->assertNotNull($opened2025);
+        $this->assertSame('2025 - 2026', $opened2025['period']);
+        $this->assertSame(16.0, $opened2025['attained']);
+        $this->assertSame('fulfilled', $opened2025['status']);
+
+        // The window that opened in 2026 holds the 2026 credit and 2027, which has not happened
+        // yet. The same credit is counted here as well.
+        $opened2026 = $this->findCoverage($member['usr_id'], $type, '2026-05-01');
+        $this->assertNotNull($opened2026);
+        $this->assertSame('2026 - 2027', $opened2026['period']);
+        $this->assertSame(8.0, $opened2026['attained']);
+        $this->assertSame('missing', $opened2026['status']);
+    }
+
+    /**
+     * A credit is stored against the unit it happened in, never against the window. Two years of
+     * credits sharing one bucket would make the overlap above impossible to compute.
+     */
+    public function testACreditIsBookedToItsYearAndNotToTheWindow(): void
+    {
+        $member = $this->createMember('req_cov_booking');
+        $type = $this->createRequirement('CPD', $member['rol_id'], 16.0, array(), array(
+            'rqt_period_unit' => 'year',
+            'rqt_period_count' => 2
+        ));
+        $this->createCreditedActivity($member['usr_id'], $type, '2026-05-01', 8.0);
+
+        $this->assertSame('2026-01-01', (string) $this->getDatabase()->queryPrepared(
+            'SELECT rac_period_reference FROM ' . RequirementsTables::activityCredits(),
+            array()
+        )->fetchColumn());
+    }
+
+    /**
+     * A window that closed is reported exactly like one that is still open - the member reads the
+     * label and knows which is which. What it is not is unreachable: entering a course from 2024
+     * that was never recorded still repairs the window it belongs to.
+     */
+    public function testAClosedWindowIsReportedAndCanStillBeFilled(): void
+    {
+        $member = $this->createMember('req_cov_closed');
+        $type = $this->createRequirement('CPD', $member['rol_id'], 16.0, array(), array(
+            'rqt_period_unit' => 'year',
+            'rqt_period_count' => 2
+        ));
+
+        $closed = $this->findCoverage($member['usr_id'], $type, '2022-05-01');
+        $this->assertNotNull($closed);
+        $this->assertSame('2022 - 2023', $closed['period']);
+        $this->assertSame('missing', $closed['status']);
+
+        // The course happened in 2022 and is only being entered now.
+        $this->createCreditedActivity($member['usr_id'], $type, '2022-09-01', 16.0);
+
+        $repaired = $this->findCoverage($member['usr_id'], $type, '2022-05-01');
+        $this->assertNotNull($repaired);
+        $this->assertSame(16.0, $repaired['attained']);
+        $this->assertSame('fulfilled', $repaired['status']);
+    }
+
     private function coverage(int $userId, RequirementType $type, string $reference = '2026-06-01'): array
     {
         $row = $this->findCoverage($userId, $type, $reference);

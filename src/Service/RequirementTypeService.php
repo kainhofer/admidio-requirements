@@ -55,10 +55,6 @@ final class RequirementTypeService
             || $count < 1 || $count > 10) {
             throw new Exception('SYS_INVALID_PAGE_VIEW');
         }
-        if ($anchor === 'calendar' && $count !== 1) {
-            throw new Exception('PLG_REQUIREMENTS_CALENDAR_MULTI_PERIOD_UNSUPPORTED');
-        }
-
         $type->setValue('rqt_period_unit', $unit);
         $type->setValue('rqt_period_anchor', $anchor);
         $type->setValue('rqt_multiple_roles_mode', $multipleMode);

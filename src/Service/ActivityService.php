@@ -281,7 +281,7 @@ final class ActivityService
         ?int $userId = null,
         string $query = '',
         ?int $requirementTypeId = null,
-        ?string $periodReference = null
+        ?array $periodRange = null
     ): array {
         global $gCurrentOrgId, $gCurrentUser, $gProfileFields;
 
@@ -298,14 +298,17 @@ final class ActivityService
             // the credits of this requirement shown beside it. With a period it becomes an INNER
             // join: the question is then "what made up this bar", and an activity that contributed
             // nothing to it is not part of the answer.
-            $creditJoin = ($periodReference === null ? ' LEFT JOIN ' : ' INNER JOIN ')
+            $creditJoin = ($periodRange === null ? ' LEFT JOIN ' : ' INNER JOIN ')
                 . RequirementsTables::activityCredits() . ' AS rac
                     ON rac.rac_activity_id = rqa.rqa_id AND rac.rac_requirement_type_id = ?';
             $params[] = $requirementTypeId;
 
-            if ($periodReference !== null) {
-                $creditJoin .= ' AND rac.rac_period_reference = ?';
-                $params[] = $periodReference;
+            if ($periodRange !== null) {
+                // A range: a period may be a rolling window of several units, and a credit is
+                // booked to the single unit it happened in.
+                $creditJoin .= ' AND rac.rac_period_reference BETWEEN ? AND ?';
+                $params[] = $periodRange[0];
+                $params[] = $periodRange[1];
             }
         }
 
