@@ -55,6 +55,7 @@ final class ActivityFileTest extends RequirementsDatabaseTestCase
         $this->temporaryFiles = array();
 
         $this->removeStoredFiles();
+        $this->removeStoredRows();
 
         parent::tearDown();
     }
@@ -479,6 +480,27 @@ final class ActivityFileTest extends RequirementsDatabaseTestCase
             'SELECT COUNT(*) FROM ' . RequirementsTables::activityFiles(),
             array()
         )->fetchColumn();
+    }
+
+    /**
+     * Clear the plugin tables by hand, because this class cannot rely on the per-test transaction.
+     *
+     * `ActivityFileService::add()` rolls its own transaction back whenever it refuses an upload,
+     * and `Database::rollback()` unwinds *every* open transaction rather than the innermost one -
+     * so the first refused file in a test takes the surrounding test transaction with it, and
+     * everything written afterwards commits for real. Most tests here refuse an upload on purpose,
+     * which makes that the normal case rather than an edge one, and a row left behind would be
+     * counted by the next test.
+     */
+    private function removeStoredRows(): void
+    {
+        foreach (array(
+            RequirementsTables::activityFiles(),
+            RequirementsTables::activityCredits(),
+            RequirementsTables::activities()
+        ) as $table) {
+            $this->getDatabase()->queryPrepared('DELETE FROM ' . $table, array(), false);
+        }
     }
 
     /**
