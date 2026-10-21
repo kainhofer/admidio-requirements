@@ -6,7 +6,7 @@
  * Runtime registration only. Domain work is performed by pages, services or CLI callbacks after
  * normal bootstrap and authorization.
  *
- * @copyright The Admidio Team
+ * @copyright Reinhold Kainhofer
  * @see https://www.admidio.org/
  * @license https://www.gnu.org/licenses/gpl-2.0.html GNU General Public License v2.0 only
  ***********************************************************************************************

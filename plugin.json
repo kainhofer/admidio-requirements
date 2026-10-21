@@ -2,8 +2,8 @@
     "name": "PLG_REQUIREMENTS_NAME",
     "description": "PLG_REQUIREMENTS_DESCRIPTION",
     "version": "0.3.0",
-    "author": "Admidio Team",
-    "url": "https://www.admidio.org",
+    "author": "Reinhold Kainhofer",
+    "url": "https://github.com/kainhofer/admidio-requirements/",
     "icon": "bi-clipboard-check",
     "requires": {
         "admidio": ">=6.0",

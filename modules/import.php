@@ -11,7 +11,7 @@
  * answer with the address of the next page, and the pages themselves are plain GET requests -
  * which is also what keeps a reload from uploading, or importing, anything a second time.
  *
- * @copyright The Admidio Team
+ * @copyright Reinhold Kainhofer
  * @see https://www.admidio.org/
  * @license https://www.gnu.org/licenses/gpl-2.0.html GNU General Public License v2.0 only
  ***********************************************************************************************

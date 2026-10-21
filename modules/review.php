@@ -11,7 +11,7 @@
  * periodq     : quarter "1".."4", for a requirement with a quarterly period
  * status      : coverage status the roster is narrowed to
  *
- * @copyright The Admidio Team
+ * @copyright Reinhold Kainhofer
  * @see https://www.admidio.org/
  * @license https://www.gnu.org/licenses/gpl-2.0.html GNU General Public License v2.0 only
  ***********************************************************************************************

@@ -7,7 +7,7 @@
  * mode : list (default) | edit | save | delete
  * uuid : UUID of the provider for edit / save / delete
  *
- * @copyright The Admidio Team
+ * @copyright Reinhold Kainhofer
  * @see https://www.admidio.org/
  * @license https://www.gnu.org/licenses/gpl-2.0.html GNU General Public License v2.0 only
  ***********************************************************************************************
