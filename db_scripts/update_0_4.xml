@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Requirements plugin 0.4: requirements a member defines for themselves.
+
+    A requirement type with rqt_usr_id belongs to that member and is seen by nobody else. Its target
+    is a rule without a role (rrr_role_id NULL), which applies to the owner.
+
+    The structural steps ignore errors because older Admidio versions do not record the steps of the
+    version a plugin was installed with: there a fresh 0.4 installation runs this file again on its
+    next update, and finds the columns already there.
+-->
+<update>
+    <step id="10" error="ignore">ALTER TABLE %PREFIX%_req_requirement_types ADD COLUMN rqt_usr_id integer unsigned NULL</step>
+    <step id="20" error="ignore">CREATE INDEX %PREFIX%_idx_rqt_usr ON %PREFIX%_req_requirement_types (rqt_usr_id)</step>
+    <step id="30" error="ignore">ALTER TABLE %PREFIX%_req_requirement_types ADD CONSTRAINT %PREFIX%_fk_rqt_usr FOREIGN KEY (rqt_usr_id) REFERENCES %PREFIX%_users (usr_id) ON DELETE CASCADE ON UPDATE RESTRICT</step>
+    <step id="40" database="mysql">ALTER TABLE %PREFIX%_req_requirement_role_rules MODIFY COLUMN rrr_role_id integer unsigned NULL</step>
+    <step id="50" database="pgsql">ALTER TABLE %PREFIX%_req_requirement_role_rules ALTER COLUMN rrr_role_id DROP NOT NULL</step>
+    <step>stop</step>
+</update>

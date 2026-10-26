@@ -13,7 +13,7 @@ final class RequirementsPluginManifestTest extends AdmidioTestCase
 
         $this->assertTrue($plugin->isValid(), (string)$plugin->error);
         $this->assertSame('requirements', $plugin->id);
-        $this->assertSame('0.3.0', $plugin->version);
+        $this->assertSame('0.4.0', $plugin->version);
         // Membership, not equality: a page added later is not a regression, and losing one is.
         // The landing page of REQ-DEC-015 is decided by name and not by position - Plugin::getUrl()
         // asks whether index.php is among the pages, and getPages() sorts them - so what has to

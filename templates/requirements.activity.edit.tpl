@@ -1,3 +1,11 @@
+<style>
+    {* The core datetime field gives its date and time inputs fixed grid fractions, which on a narrow
+       window squeeze them below the width of their own value. *}
+    #rqa_begin_group .row > div, #rqa_end_group .row > div { flex: 0 0 auto; width: auto; }
+    #rqa_begin, #rqa_end { min-width: 10rem; }
+    #rqa_begin_time, #rqa_end_time { min-width: 7.5rem; }
+</style>
+
 <form {foreach $attributes as $attribute}{$attribute@key}="{$attribute}" {/foreach}>
     {if $readOnly}
         <div class="alert alert-info" role="alert">
@@ -47,7 +55,7 @@
                         </thead>
                         <tbody>
                             {foreach $creditFields as $cf}
-                                <tr id="adm_req_credit_{$cf.typeId}" {if not $cf.shown}hidden{/if}>
+                                <tr id="adm_req_credit_{$cf.typeId}" {if not $cf.shown}hidden{/if}{if $cf.isNew} data-new="1"{/if}>
                                     <td class="fw-bold">{$cf.name nofilter}</td>
                                     <td>
                                         {if $cf.kind eq 'year'}

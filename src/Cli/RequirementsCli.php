@@ -135,6 +135,7 @@ final class RequirementsCli
                     rqt_active AS active
                FROM ' . RequirementsTables::requirementTypes() . '
               WHERE rqt_org_id = ?
+                AND rqt_usr_id IS NULL
               ORDER BY rqt_sequence, rqt_name',
             array((int)$gCurrentOrgId)
         )->fetchAll();
@@ -167,7 +168,7 @@ final class RequirementsCli
             'rqt_uuid',
             CliApplication::requireArgument($arguments, 0, 'requirement'),
             'Requirement',
-            'rqt_org_id = ?',
+            'rqt_org_id = ? AND rqt_usr_id IS NULL',
             array((int)$gCurrentOrgId)
         ));
         $values = self::requirementValues($options);
@@ -958,7 +959,7 @@ final class RequirementsCli
             'rqt_uuid',
             $reference,
             'Requirement',
-            'rqt_org_id = ?',
+            'rqt_org_id = ? AND rqt_usr_id IS NULL',
             array((int)$gCurrentOrgId),
             'rqt_short_name'
         );

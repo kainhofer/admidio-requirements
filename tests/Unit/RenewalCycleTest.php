@@ -104,6 +104,28 @@ final class RenewalCycleTest extends RequirementsUnitTestCase
     }
 
     /**
+     * The overview shows each cycle with the contributions that made it up, so the walk reports
+     * where every cycle began and what it collected, excess included.
+     */
+    public function testEachCycleReportsItsFirstContributionAndItsTotal(): void
+    {
+        [, , $cycles] = FulfilmentService::renewalCycles(
+            self::credits(array(
+                array('2020-05-01', 20.0),
+                array('2023-06-01', 8.0),
+                array('2023-11-01', 7.0),
+                array('2026-01-01', 3.0)
+            )),
+            15.0
+        );
+
+        $this->assertSame(array(
+            array('from' => '2020-05-01', 'renewal' => '2020-05-01', 'attained' => 20.0),
+            array('from' => '2023-06-01', 'renewal' => '2023-11-01', 'attained' => 15.0)
+        ), $cycles);
+    }
+
+    /**
      * A binary requirement has no threshold, so any positive contribution renews it - which is the
      * half of REQ-DEC-005 that was never in doubt.
      */

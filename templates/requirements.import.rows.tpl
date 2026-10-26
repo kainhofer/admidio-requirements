@@ -41,6 +41,9 @@
                             {foreach $row.credits as $credit}
                                 <div>{$credit nofilter}</div>
                             {/foreach}
+                            {foreach $row.certificates as $certificate}
+                                <div class="text-nowrap"><i class="bi bi-paperclip"></i> {$certificate nofilter}</div>
+                            {/foreach}
                         </td>
                         <td style="word-break: break-word;">
                             {foreach $row.messages as $message}

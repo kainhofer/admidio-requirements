@@ -70,8 +70,11 @@ class ImportPresenter extends RequirementsPresenter
                 'text/plain',
                 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                 'application/vnd.ms-excel',
-                'application/vnd.oasis.opendocument.spreadsheet'
-            )
+                'application/vnd.oasis.opendocument.spreadsheet',
+                'application/zip',
+                'application/x-zip-compressed'
+            ),
+            'helpTextId' => 'PLG_REQUIREMENTS_IMPORT_ARCHIVE_HELP'
         ));
         $form->addInput('import_sheet', $gL10n->get('SYS_WORKSHEET_NAMEINDEX'), '', array(
             'helpTextId' => 'PLG_REQUIREMENTS_IMPORT_WORKSHEET_HELP'
@@ -161,15 +164,17 @@ class ImportPresenter extends RequirementsPresenter
 
         $groups = array();
         if ($this->isAdmin()) {
+            $memberFields = $this->addFields($form, $columns, $suggested, array(
+                'user_login' => $gL10n->get('SYS_USERNAME'),
+                'user_uuid' => $gL10n->get('PLG_REQUIREMENTS_IMPORT_USER_UUID'),
+                'first_name' => $gL10n->get('SYS_FIRSTNAME'),
+                'last_name' => $gL10n->get('SYS_LASTNAME')
+            ));
+            array_push($memberFields, ...$this->addProfileFieldMapping($form, $columns, $suggested));
             $groups[] = array(
                 'label' => $gL10n->get('SYS_MEMBER'),
                 'help' => $gL10n->get('PLG_REQUIREMENTS_IMPORT_MEMBER_DESC'),
-                'fields' => $this->addFields($form, $columns, $suggested, array(
-                    'user_login' => $gL10n->get('SYS_USERNAME'),
-                    'user_uuid' => $gL10n->get('PLG_REQUIREMENTS_IMPORT_USER_UUID'),
-                    'first_name' => $gL10n->get('SYS_FIRSTNAME'),
-                    'last_name' => $gL10n->get('SYS_LASTNAME')
-                ))
+                'fields' => $memberFields
             );
         }
 
@@ -187,7 +192,8 @@ class ImportPresenter extends RequirementsPresenter
             'url' => $gL10n->get('SYS_WEBSITE'),
             'comments' => $gL10n->get('SYS_COMMENT'),
             'source_key' => $gL10n->get('PLG_REQUIREMENTS_IMPORT_SOURCE_KEY'),
-            'duplicate' => $gL10n->get('PLG_REQUIREMENTS_IMPORT_DUPLICATE_COLUMN')
+            'duplicate' => $gL10n->get('PLG_REQUIREMENTS_IMPORT_DUPLICATE_COLUMN'),
+            'certificates' => $gL10n->get('PLG_REQUIREMENTS_FILES')
         );
         if ($this->isAdmin()) {
             $activityFields['status'] = $gL10n->get('PLG_REQUIREMENTS_STATUS');
@@ -199,7 +205,7 @@ class ImportPresenter extends RequirementsPresenter
         );
 
         $creditFields = array();
-        foreach ((new RequirementTypeService($gDb))->findTypes() as $type) {
+        foreach ((new RequirementTypeService($gDb))->findTypes('', (int) $GLOBALS['gCurrentUser']->getValue('usr_id')) as $type) {
             if (!(bool) $type['rqt_active']) {
                 continue;
             }
@@ -313,6 +319,10 @@ class ImportPresenter extends RequirementsPresenter
                 'title' => SecurityUtils::encodeHTML((string) $row['title']),
                 'begin' => SecurityUtils::encodeHTML((string) $row['begin']),
                 'credits' => $credits,
+                'certificates' => array_map(
+                    static fn(string $name): string => SecurityUtils::encodeHTML($name),
+                    $row['certificates'] ?? array()
+                ),
                 'messages' => array_map(
                     static fn(string $message): string => SecurityUtils::encodeHTML($message),
                     $row['messages']
@@ -368,6 +378,54 @@ class ImportPresenter extends RequirementsPresenter
         }
 
         return $entries;
+    }
+
+    /**
+     * The member identified by a profile field - a member number, say: which field, and which
+     * column holds it. The two answers become one `profile_<FIELD>` assignment in `import.php`, so
+     * the service sees the same field a column headed `profile_membership_number` maps by itself.
+     *
+     * @param array<string,string> $columns
+     * @param array<string,int> $suggested
+     * @return array<int,array{id:string,label:string}>
+     * @throws Exception
+     */
+    private function addProfileFieldMapping(FormPresenter $form, array $columns, array $suggested): array
+    {
+        global $gL10n, $gProfileFields;
+
+        $fields = array('' => '');
+        foreach ($gProfileFields->getProfileFields() as $internal => $field) {
+            // The name is the pair of first and last name, mapped above; one half identifies nobody.
+            if (in_array($internal, array('FIRST_NAME', 'LAST_NAME'), true)) {
+                continue;
+            }
+            $fields[$internal] = (string) $field->getValue('usf_name');
+        }
+
+        $suggestedField = '';
+        $suggestedColumn = '';
+        foreach ($suggested as $field => $column) {
+            if (str_starts_with($field, ImportService::PROFILE_FIELD_PREFIX)) {
+                $suggestedField = strtoupper(substr($field, strlen(ImportService::PROFILE_FIELD_PREFIX)));
+                $suggestedColumn = (string) $column;
+            }
+        }
+
+        $form->addSelectBox('map_member_profile_field', $gL10n->get('PLG_REQUIREMENTS_IMPORT_PROFILE_FIELD'), $fields, array(
+            'showContextDependentFirstEntry' => false,
+            'defaultValue' => isset($fields[$suggestedField]) ? $suggestedField : '',
+            'helpTextId' => 'PLG_REQUIREMENTS_IMPORT_PROFILE_FIELD_HELP'
+        ));
+        $form->addSelectBox('map_member_profile_column', $gL10n->get('PLG_REQUIREMENTS_IMPORT_PROFILE_FIELD_COLUMN'), $columns, array(
+            'showContextDependentFirstEntry' => false,
+            'defaultValue' => $suggestedColumn
+        ));
+
+        return array(
+            array('id' => 'map_member_profile_field', 'label' => $gL10n->get('PLG_REQUIREMENTS_IMPORT_PROFILE_FIELD')),
+            array('id' => 'map_member_profile_column', 'label' => $gL10n->get('PLG_REQUIREMENTS_IMPORT_PROFILE_FIELD_COLUMN'))
+        );
     }
 
     /**
@@ -428,7 +486,7 @@ class ImportPresenter extends RequirementsPresenter
     {
         $names = array();
         if ($this->isAdmin()) {
-            $names = array('user_login', 'user_uuid', 'first_name', 'last_name');
+            $names = array('user_login', 'user_uuid', 'first_name', 'last_name', 'profile_<FIELD>');
         }
         foreach (ImportService::ACTIVITY_FIELDS as $field) {
             if ($this->isAdmin() || !ImportService::isRestrictedField($field)) {

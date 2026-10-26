@@ -40,8 +40,15 @@ therefore an own menu entry; its texts are available in English and German.
   so that a changed requirement does not apply to older periods. A rule demands either the full amount
   or an amount pro rata to the membership, counted by month, week or day. Earlier periods use the
   historical role memberships of Admidio.
+* **Own requirements:** under *My requirements* a member defines requirements of their own, for
+  example the training obligation of their employer, with a target and the day it applies from. They
+  are calculated like the organisation's and appear in the member's overview. Other members never see
+  them, administrators only as credits on the member's activities, and the review and the command line
+  leave them out.
 * **Fulfilment overview:** above the activity list, for each applicable requirement the credits earned
-  against the credits required, for the running period and a configurable number of previous ones.
+  against the credits required, for the running period and a configurable number of previous ones,
+  with buttons to page back to earlier periods. A requirement that recurs after its last fulfilment
+  shows each renewal as the window it is valid for.
 * **Administrative review:** per requirement and period, the coverage of every member, with the
   accepted credits editable in place (administrators only).
 * **Import:** a wizard reads a CSV or spreadsheet of activities and their credits (file, column

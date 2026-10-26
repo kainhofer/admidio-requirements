@@ -589,6 +589,67 @@ final class ActivityImportTest extends RequirementsDatabaseTestCase
      * @param array<string,string> $assignments
      * @return array{summary:array<string,int>,rows:array<int,array<string,mixed>>}
      */
+    /**
+     * A member number - or any other profile field - identifies the member of a row.
+     */
+    public function testAProfileFieldIdentifiesTheMember(): void
+    {
+        $member = $this->createMember('req_imp_profile');
+        $this->setProfileValue($member['usr_id'], 'EMAIL', 'member.number@example.local');
+
+        $file = $this->csv(array(
+            array('profile_email', 'title', 'begin_date'),
+            array('member.number@example.local', 'First aid', '2026-03-01')
+        ));
+        $result = $this->import($file);
+
+        $this->assertSame(1, $result['summary']['create'], json_encode($result['rows']));
+        $owner = $this->getDatabase()->queryPrepared(
+            'SELECT rqa_user_id FROM ' . RequirementsTables::activities() . ' WHERE rqa_uuid = ?',
+            array($result['rows'][0]['uuid'])
+        )->fetchColumn();
+        $this->assertSame($member['usr_id'], (int) $owner);
+    }
+
+    public function testAProfileFieldValueSharedByTwoMembersIsReportedAndNotGuessed(): void
+    {
+        foreach (array('req_imp_profile_a', 'req_imp_profile_b') as $login) {
+            $member = $this->createMember($login);
+            $this->setProfileValue($member['usr_id'], 'EMAIL', 'shared@example.local');
+        }
+
+        $result = $this->import($this->csv(array(
+            array('profile_email', 'title', 'begin_date'),
+            array('shared@example.local', 'First aid', '2026-03-01'),
+            array('nobody@example.local', 'First aid', '2026-03-01')
+        )));
+
+        $this->assertSame(array('error', 'error'), array_column($result['rows'], 'status'));
+        $this->assertStringContainsString('Several members', $result['rows'][0]['messages'][0]);
+        $this->assertStringContainsString('No member', $result['rows'][1]['messages'][0]);
+    }
+
+    public function testAProfileFieldThatDoesNotExistIsRefusedWithTheMapping(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('profile_no_such_field');
+
+        $this->import($this->csv(array(
+            array('profile_no_such_field', 'title', 'begin_date'),
+            array('4711', 'First aid', '2026-03-01')
+        )));
+    }
+
+    private function setProfileValue(int $userId, string $field, string $value): void
+    {
+        global $gProfileFields;
+
+        $this->getDatabase()->queryPrepared(
+            'INSERT INTO ' . TBL_USER_DATA . ' (usd_usr_id, usd_usf_id, usd_value) VALUES (?, ?, ?)',
+            array($userId, (int) $gProfileFields->getProperty($field, 'usf_id'), $value)
+        );
+    }
+
     private function import(
         string $file,
         array $options = array(),

@@ -76,11 +76,17 @@ final class ImportService
      */
     public const MEMBER_FIELDS = array('user_uuid', 'user_login', 'user_id', 'last_name');
 
+    /**
+     * The prefix of the member identifier that is a profile field: `profile_membership_number` finds
+     * the member whose MEMBERSHIP_NUMBER is the cell's value. It counts as one of MEMBER_FIELDS.
+     */
+    public const PROFILE_FIELD_PREFIX = 'profile_';
+
     /** @var array<int,string> */
     public const ACTIVITY_FIELDS = array(
         'title', 'description', 'url', 'location',
         'begin_date', 'begin_time', 'end_date', 'end_time', 'certificate_date',
-        'attendance', 'comments', 'provider', 'status', 'source_key', 'duplicate'
+        'attendance', 'comments', 'provider', 'status', 'source_key', 'duplicate', 'certificates'
     );
 
     /** The activity column each plain text field is copied to; the rest are parsed or resolved. */
@@ -308,8 +314,9 @@ final class ImportService
             if (self::canonicalField((string) $field) !== $field) {
                 throw new InvalidArgumentException(
                     'Unknown import field "' . $field . '". Use one of ' . implode(', ', self::ACTIVITY_FIELDS)
-                    . ', ' . implode(', ', self::MEMBER_FIELDS) . ', first_name, or credit_/period_'
-                    . ' followed by a requirement short name.'
+                    . ', ' . implode(', ', self::MEMBER_FIELDS) . ', first_name, profile_ followed by the'
+                    . ' internal name of a profile field, or credit_/period_ followed by a requirement'
+                    . ' short name.'
                 );
             }
 
@@ -405,7 +412,7 @@ final class ImportService
 
             if ($targetUserId === null && $memberColumn === null) {
                 throw new InvalidArgumentException(
-                    'The import needs a member: map one of ' . implode(', ', self::MEMBER_FIELDS)
+                    'The import needs a member: map one of ' . implode(', ', self::MEMBER_FIELDS) . ', a profile field'
                     . ' or name the member the whole file belongs to.'
                 );
             }
@@ -421,6 +428,10 @@ final class ImportService
         }
 
         $firstRowHeader = (bool) ($options['firstRowHeader'] ?? true);
+        // The certificate files of an archive upload, as their path in the archive => the unpacked
+        // file; null when the file came on its own and the certificates cannot be attached.
+        $archive = $options['archive'] ?? null;
+        $fileService = new ActivityFileService($this->db);
         $result = array(
             'summary' => array('rows' => 0, 'create' => 0, 'skip' => 0, 'error' => 0, 'credits' => 0),
             'rows' => array()
@@ -441,22 +452,44 @@ final class ImportService
                 'begin' => '',
                 'credits' => array(),
                 'duplicates' => array(),
+                'certificates' => array(),
                 'messages' => array()
             );
 
             try {
-                $resolved = $this->resolveRow($row, $mapping, $targetUserId, $policy, $admin);
+                $resolved = $this->resolveRow($row, $mapping, $targetUserId, $policy, $admin, $archive);
                 $report['member'] = $resolved['memberName'];
                 $report['title'] = (string) $resolved['values']['rqa_title'];
                 $report['begin'] = (string) $resolved['values']['rqa_begin_date'];
                 $report['credits'] = $resolved['credits'];
                 $report['duplicates'] = $resolved['duplicates'];
+                $report['certificates'] = array_column($resolved['certificates'], 'name');
                 $report['messages'] = $resolved['messages'];
                 $report['status'] = $resolved['skip'] ? 'skip' : 'create';
 
                 if ($write && !$resolved['skip']) {
                     $report['uuid'] = $this->persist($resolved);
                     $report['status'] = 'imported';
+
+                    // The certificates follow the committed row, as they follow the save of the
+                    // activity form: a file refused now - the preview checked them all, so only a
+                    // quota or an inspection listener can - is reported without losing the activity.
+                    if ($resolved['certificates'] !== array()) {
+                        $activity = new Activity($this->db);
+                        $activity->readDataByUuid($report['uuid']);
+                        foreach ($resolved['certificates'] as $certificate) {
+                            try {
+                                $fileService->add($activity, array(
+                                    'name' => $certificate['name'],
+                                    'tmp_name' => $certificate['path'],
+                                    'size' => (int) filesize($certificate['path']),
+                                    'error' => UPLOAD_ERR_OK
+                                ));
+                            } catch (Throwable $fileException) {
+                                $report['messages'][] = $certificate['name'] . ': ' . $fileException->getMessage();
+                            }
+                        }
+                    }
                 }
             } catch (Throwable $exception) {
                 $report['status'] = 'error';
@@ -497,7 +530,8 @@ final class ImportService
         array $mapping,
         ?int $targetUserId,
         string $policy,
-        bool $admin
+        bool $admin,
+        ?array $archive = null
     ): array {
         $messages = array();
 
@@ -564,6 +598,15 @@ final class ImportService
 
         $credits = $this->resolveCredits($row, $mapping, (string) $values['rqa_begin_date']);
 
+        $certificates = array();
+        if (isset($mapping['certificates'])) {
+            [$certificates, $certificateMessages] = $this->resolveCertificates(
+                $this->cell($row, $mapping['certificates']),
+                $archive
+            );
+            array_push($messages, ...$certificateMessages);
+        }
+
         // A row may overrule the import-level answer, which is what makes a preview worth reading:
         // a reviewer who finds one genuine repeat among fifty corrections marks that one row.
         if (isset($mapping['duplicate'])) {
@@ -597,6 +640,7 @@ final class ImportService
             'userId' => $userId,
             'memberName' => $memberName,
             'credits' => $credits,
+            'certificates' => $certificates,
             'duplicates' => $duplicates,
             'skip' => $skip,
             'messages' => $messages
@@ -707,6 +751,58 @@ final class ImportService
     }
 
     /**
+     * The certificate files a row names, each found in the uploaded archive and checked the way an
+     * upload is checked, so that the preview reports a missing or unacceptable file on its row.
+     *
+     * The cell lists files separated by semicolons or line breaks; a comma is a character file
+     * names have. A row that names files without an archive to take them from, or while the
+     * organization keeps no certificates, is still imported - it says so instead of failing,
+     * because a spreadsheet exported with its certificate names is still a valid list of activities.
+     *
+     * @param array<string,string>|null $archive
+     * @return array{0:array<int,array{name:string,path:string}>,1:array<int,string>} the files and
+     *     the messages for the row
+     * @throws Exception
+     */
+    private function resolveCertificates(string $cell, ?array $archive): array
+    {
+        global $gL10n;
+
+        $names = array_values(array_filter(
+            array_map('trim', preg_split('/[;\r\n]+/', $cell) ?: array()),
+            static fn(string $name): bool => $name !== ''
+        ));
+        if ($names === array()) {
+            return array(array(), array());
+        }
+        if (!ActivityFileService::isEnabled()) {
+            return array(array(), array($gL10n->get('PLG_REQUIREMENTS_IMPORT_CERTIFICATES_DISABLED')));
+        }
+        if ($archive === null) {
+            return array(array(), array($gL10n->get('PLG_REQUIREMENTS_IMPORT_CERTIFICATES_NO_ARCHIVE')));
+        }
+
+        $limit = (int) RequirementsPlugin::setting(ActivityFileService::SETTING_MAX_COUNT);
+        if ($limit > 0 && count($names) > $limit) {
+            throw new Exception('PLG_REQUIREMENTS_FILES_TOO_MANY', array($limit));
+        }
+
+        $fileService = new ActivityFileService($this->db);
+        $certificates = array();
+        foreach ($names as $name) {
+            [$entry, $path] = ImportArchive::find($archive, $name);
+            try {
+                $fileService->assertAcceptable($path);
+            } catch (Exception $exception) {
+                throw new InvalidArgumentException($name . ': ' . $exception->getMessage());
+            }
+            $certificates[] = array('name' => basename($entry), 'path' => $path);
+        }
+
+        return array($certificates, array());
+    }
+
+    /**
      * Existing activities of this member that the row would repeat.
      *
      * With a source key the question is answered by the key alone: an import source that provides
@@ -756,6 +852,13 @@ final class ImportService
             }
             return array($this->memberByName($first, $last), trim($last . ', ' . $first));
         }
+        if (str_starts_with($field, self::PROFILE_FIELD_PREFIX)) {
+            $value = $this->cell($row, $mapping[$field]);
+            if ($value === '') {
+                throw new InvalidArgumentException('The row has no value in the "' . $field . '" column.');
+            }
+            return array($this->memberByProfileField(self::profileFieldId($field), $value), $value);
+        }
 
         $value = $this->cell($row, $mapping[$field]);
         if ($value === '') {
@@ -788,6 +891,50 @@ final class ImportService
         $this->assertMember($userId, $value);
 
         return array($userId, $value);
+    }
+
+    /**
+     * The one member of this organization whose profile field has exactly this value - a member
+     * number, typically. As with a name, two members sharing the value are reported rather than
+     * one of them picked: a member number that is not unique is a data error the import must not
+     * paper over.
+     *
+     * @throws Exception|InvalidArgumentException
+     */
+    private function memberByProfileField(int $fieldId, string $value): int
+    {
+        global $gCurrentOrgId;
+
+        $cacheKey = 'profile' . chr(0) . $fieldId . chr(0) . $value;
+        if (!array_key_exists($cacheKey, $this->memberCache)) {
+            $ids = $this->db->queryPrepared(
+                'SELECT DISTINCT usr.usr_id
+                   FROM ' . TBL_USERS . ' AS usr
+             INNER JOIN ' . TBL_USER_DATA . ' AS usd
+                     ON usd.usd_usr_id = usr.usr_id AND usd.usd_usf_id = ? AND usd.usd_value = ?
+             INNER JOIN ' . TBL_MEMBERS . ' AS mem ON mem.mem_usr_id = usr.usr_id
+             INNER JOIN ' . TBL_ROLES . ' AS rol ON rol.rol_id = mem.mem_rol_id
+             INNER JOIN ' . TBL_CATEGORIES . ' AS cat
+                     ON cat.cat_id = rol.rol_cat_id AND cat.cat_org_id = ?
+                  WHERE usr.usr_valid = true',
+                array($fieldId, $value, (int) $gCurrentOrgId)
+            )->fetchAll(PDO::FETCH_COLUMN);
+
+            if (count($ids) > 1) {
+                throw new InvalidArgumentException(
+                    'Several members of this organization have "' . $value . '" in this profile field.'
+                );
+            }
+            $this->memberCache[$cacheKey] = count($ids) === 1 ? (int) $ids[0] : null;
+        }
+
+        $userId = $this->memberCache[$cacheKey];
+        if ($userId === null) {
+            throw new InvalidArgumentException(
+                'No member of this organization has "' . $value . '" in this profile field.'
+            );
+        }
+        return $userId;
     }
 
     /**
@@ -910,7 +1057,10 @@ final class ImportService
      */
     private function requirementByReference(string $reference): array
     {
-        $this->requirementTypes ??= (new RequirementTypeService($this->db))->findTypes();
+        // Including the importing member's own requirements; saveCredit() keeps them off the
+        // activities of anybody else an administrator imports for.
+        $this->requirementTypes ??= (new RequirementTypeService($this->db))
+            ->findTypes('', (int) $GLOBALS['gCurrentUser']->getValue('usr_id'));
 
         $matches = array();
         foreach ($this->requirementTypes as $type) {
@@ -1063,7 +1213,7 @@ final class ImportService
             || $name === 'first_name') {
             return $name;
         }
-        foreach (array('credit_', 'period_') as $prefix) {
+        foreach (array('credit_', 'period_', self::PROFILE_FIELD_PREFIX) as $prefix) {
             if (str_starts_with($name, $prefix) && strlen($name) > strlen($prefix)) {
                 return $name;
             }
@@ -1087,8 +1237,8 @@ final class ImportService
         }
 
         $memberFields = array_values(array_filter(
-            self::MEMBER_FIELDS,
-            static fn(string $field): bool => isset($mapping[$field])
+            array_keys($mapping),
+            static fn(string $field): bool => self::isMemberField($field)
         ));
         if (count($memberFields) > 1) {
             throw new InvalidArgumentException(
@@ -1099,6 +1249,14 @@ final class ImportService
             throw new InvalidArgumentException(
                 'Identifying a member by name needs both a first_name and a last_name column.'
             );
+        }
+        foreach ($memberFields as $field) {
+            if (str_starts_with($field, self::PROFILE_FIELD_PREFIX) && self::profileFieldId($field) === 0) {
+                throw new InvalidArgumentException(
+                    'The column "' . $field . '" names no profile field; use profile_ followed by the'
+                    . ' internal name of one, for example profile_membership_number.'
+                );
+            }
         }
 
         // A period column without the credits it belongs to is a mapping the operator did not
@@ -1148,7 +1306,7 @@ final class ImportService
      */
     public static function isRestrictedField(string $field): bool
     {
-        return in_array($field, self::MEMBER_FIELDS, true)
+        return self::isMemberField($field)
             || $field === 'first_name'
             || $field === 'status';
     }
@@ -1158,12 +1316,33 @@ final class ImportService
      */
     private function mappedMemberField(array $mapping): ?string
     {
-        foreach (self::MEMBER_FIELDS as $field) {
-            if (isset($mapping[$field])) {
+        foreach (array_keys($mapping) as $field) {
+            if (self::isMemberField($field)) {
                 return $field;
             }
         }
         return null;
+    }
+
+    /**
+     * Whether a field identifies the member of a row: one of MEMBER_FIELDS or a profile field.
+     */
+    public static function isMemberField(string $field): bool
+    {
+        return in_array($field, self::MEMBER_FIELDS, true)
+            || (str_starts_with($field, self::PROFILE_FIELD_PREFIX) && strlen($field) > strlen(self::PROFILE_FIELD_PREFIX));
+    }
+
+    /**
+     * The id of the profile field a `profile_X` field names, or 0 when there is none. X is the
+     * field's internal name, in any letter case.
+     */
+    public static function profileFieldId(string $field): int
+    {
+        global $gProfileFields;
+
+        $internal = strtoupper(substr($field, strlen(self::PROFILE_FIELD_PREFIX)));
+        return $internal === '' ? 0 : (int) $gProfileFields->getProperty($internal, 'usf_id');
     }
 
     /**

@@ -230,6 +230,67 @@ final class ActivityFileService
     }
 
     /**
+     * Refuse a file that add() would refuse for what it is: its size and its sniffed type.
+     *
+     * The import preview asks this of every certificate a row names, so a file that would be
+     * turned away is reported before anything is written. What depends on the activity it lands
+     * on - the count, the quota - and the inspection hook are still add()'s to decide.
+     *
+     * @throws Exception
+     */
+    public function assertAcceptable(string $path): void
+    {
+        if (!self::isEnabled()) {
+            throw new Exception('PLG_REQUIREMENTS_FILES_DISABLED');
+        }
+        $size = is_file($path) ? (int) filesize($path) : 0;
+        if ($size <= 0) {
+            throw new Exception('SYS_FILE_NOT_EXIST');
+        }
+        $this->assertWithinSize($size);
+
+        $mimeType = $this->sniffMimeType($path);
+        $allowed = self::allowedMimeTypes();
+        if (!isset($allowed[$mimeType])) {
+            throw new Exception('PLG_REQUIREMENTS_FILES_TYPE_REJECTED', array(
+                $mimeType,
+                implode(', ', $allowed)
+            ));
+        }
+    }
+
+    /**
+     * The files of several activities at once, keyed by activity id - one query for a whole list or
+     * review page rather than one per row. The caller has already decided which activities it may
+     * show; this only reads what is attached to them.
+     *
+     * @param array<int,int> $activityIds
+     * @return array<int,array<int,array<string,mixed>>>
+     * @throws Exception
+     */
+    public function listForActivities(array $activityIds): array
+    {
+        $activityIds = array_values(array_unique(array_map('intval', $activityIds)));
+        if ($activityIds === array()) {
+            return array();
+        }
+
+        $rows = $this->db->getArrayFromSql(
+            'SELECT raf_id, raf_uuid, raf_activity_id, raf_name, raf_mime_type, raf_size, raf_timestamp_create
+               FROM ' . RequirementsTables::activityFiles() . '
+              WHERE raf_activity_id IN (' . implode(', ', array_fill(0, count($activityIds), '?')) . ')
+           ORDER BY raf_timestamp_create, raf_id',
+            $activityIds
+        );
+
+        $byActivity = array();
+        foreach ($rows as $row) {
+            $byActivity[(int) $row['raf_activity_id']][] = $row;
+        }
+        return $byActivity;
+    }
+
+    /**
      * Send one file to the browser.
      *
      * This is the only code that opens an evidence file for reading, and it re-asks the permission
@@ -252,7 +313,7 @@ final class ActivityFileService
         // Always an attachment, never inline: a crafted file that a browser decides to render would
         // otherwise execute in Admidio's own origin, with the session cookie attached.
         header('Content-Type: ' . $file->getValue('raf_mime_type'));
-        header('Content-Disposition: attachment; filename="' . $this->headerName($file) . '"');
+        header('Content-Disposition: attachment; ' . $this->dispositionName($file));
         header('Content-Length: ' . (string) filesize($path));
         header('X-Content-Type-Options: nosniff');
         header('Cache-Control: private, no-store');
@@ -631,12 +692,25 @@ final class ActivityFileService
     }
 
     /**
-     * The file name for the Content-Disposition header, with the quoting characters removed.
+     * The file name parameters of the Content-Disposition header (RFC 6266).
+     *
+     * A browser reads the plain `filename` as Latin-1, so a UTF-8 name sent there arrives as
+     * mojibake - "Ö" becomes "Ã" and a stray byte. The name itself therefore goes into
+     * `filename*`, percent-encoded as UTF-8, and `filename` carries an ASCII rendering for the
+     * clients that know nothing else.
      */
-    private function headerName(ActivityFile $file): string
+    private function dispositionName(ActivityFile $file): string
     {
-        $name = str_replace(array('"', "\r", "\n"), '', (string) $file->getValue('raf_name'));
+        $name = str_replace(array('"', '\\', "\r", "\n"), '', (string) $file->getValue('raf_name', 'database'));
+        if ($name === '') {
+            $name = $file->getStoredName();
+        }
 
-        return $name === '' ? $file->getStoredName() : $name;
+        $ascii = preg_replace('/[^\x20-\x7E]/', '_', (string) @iconv('UTF-8', 'ASCII//TRANSLIT', $name)) ?? '';
+        if (trim($ascii, '_ ') === '') {
+            $ascii = $file->getStoredName();
+        }
+
+        return 'filename="' . $ascii . '"; filename*=UTF-8\'\'' . rawurlencode($name);
     }
 }

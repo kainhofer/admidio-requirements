@@ -182,6 +182,12 @@ final class ActivityService
             || (int)$requirementType->getValue('rqt_org_id') !== (int)$gCurrentOrgId) {
             throw new Exception('SYS_NO_RIGHTS');
         }
+        // A member's own requirement takes credits from their own activities only. This is the one
+        // place every credit is written through, the form, the import and the command line alike.
+        $owner = RequirementTypeService::ownerOf($requirementType);
+        if ($owner !== null && $owner !== (int)$activity->getValue('rqa_user_id')) {
+            throw new Exception('SYS_NO_RIGHTS');
+        }
 
         if (!$credit->isNewRecord()) {
             if ((int)$credit->getValue('rac_activity_id') !== (int)$activity->getValue('rqa_id')
@@ -344,6 +350,160 @@ final class ActivityService
         $sql .= ' ORDER BY rqa.rqa_begin_date DESC, rqa.rqa_title, rqa.rqa_id';
 
         return $this->db->getArrayFromSql($sql, $params);
+    }
+
+    /** The columns the activity table may be sorted by, as the SQL each one sorts on. */
+    public const LIST_SORT_COLUMNS = array(
+        'period' => array('rac.rac_period_reference', 'rqt.rqt_sequence'),
+        'date' => array('rqa.rqa_begin_date', 'rqa.rqa_begin_time'),
+        'title' => array('rqa.rqa_title'),
+        'requirement' => array('rqt.rqt_sequence', 'rqt.rqt_name'),
+        'credits' => array('COALESCE(rac.rac_credits_accepted, rac.rac_credits_claimed)'),
+        'provider' => array(self::LIST_PROVIDER_SQL),
+        'member' => array('last_name.usd_value', 'first_name.usd_value'),
+        'attendance' => array('rqa.rqa_attendance'),
+        'certificate' => array('rqa.rqa_certificate_date')
+    );
+
+    /**
+     * What the table can be grouped by, as the SQL that orders the rows into their groups: dates
+     * newest first, as the list itself, names alphabetically. A row without a value (no credit, no
+     * certificate date) sorts after all the others. The period groups by requirement as well,
+     * because "2026" of a yearly and "2026 Q1" of a quarterly requirement start on the same day.
+     */
+    public const LIST_GROUP_COLUMNS = array(
+        'period' => array('rac.rac_period_reference DESC', 'rqt.rqt_sequence', 'rqt.rqt_id'),
+        'provider' => array(self::LIST_PROVIDER_SQL),
+        'requirement' => array('rqt.rqt_sequence', 'rqt.rqt_name', 'rqt.rqt_id'),
+        'begin' => array('rqa.rqa_begin_date DESC'),
+        'end' => array('COALESCE(rqa.rqa_end_date, rqa.rqa_begin_date) DESC'),
+        'certificate' => array('rqa.rqa_certificate_date DESC')
+    );
+
+    /** The provider name the list shows: the short name where there is one. */
+    private const LIST_PROVIDER_SQL = 'COALESCE(NULLIF(rqa.rqa_provider_short_name, \'\'), rqa.rqa_provider_name)';
+
+    /**
+     * One page of the activity table, for its server-side DataTables endpoint.
+     *
+     * A row is one credit of an activity, not the activity: an activity that counts towards two
+     * requirements is two rows, because period, requirement and credits are what the list is read
+     * for, and an activity has one of each per requirement. An activity without any credit - or
+     * without one for the requirement the list is narrowed to - is still one row with those cells
+     * empty, so nothing the member entered disappears from their list. Only a period filter, which
+     * asks what made up one bar of the overview, drops the activities that contributed nothing.
+     *
+     * @param array{userId?:?int,query?:string,requirementTypeId?:?int,periodRange?:?array,
+     *     providerId?:?int,dateFrom?:string,dateTo?:string} $filter
+     * @param string $groupBy a key of LIST_GROUP_COLUMNS, or '' for no grouping; the groups come
+     *     first in the order so that every group is one run of consecutive rows
+     * @param array<int,array{0:string,1:string}> $order keys of LIST_SORT_COLUMNS with 'asc'/'desc'
+     * @param int $length rows per page, or -1 for all of them
+     * @return array{count:int,rows:array<int,array<string,mixed>>}
+     * @throws Exception
+     */
+    public function findActivityRows(
+        array $filter,
+        string $groupBy = '',
+        array $order = array(),
+        int $start = 0,
+        int $length = -1
+    ): array {
+        global $gCurrentOrgId, $gCurrentUser, $gProfileFields;
+
+        $params = array(
+            (int) $gProfileFields->getProperty('FIRST_NAME', 'usf_id'),
+            (int) $gProfileFields->getProperty('LAST_NAME', 'usf_id')
+        );
+
+        $requirementTypeId = $filter['requirementTypeId'] ?? null;
+        $periodRange = $filter['periodRange'] ?? null;
+        $creditJoin = ($periodRange === null ? ' LEFT JOIN ' : ' INNER JOIN ')
+            . RequirementsTables::activityCredits() . ' AS rac ON rac.rac_activity_id = rqa.rqa_id';
+        if ($requirementTypeId !== null) {
+            $creditJoin .= ' AND rac.rac_requirement_type_id = ?';
+            $params[] = $requirementTypeId;
+        }
+        if ($periodRange !== null) {
+            // A range: a period may be a rolling window of several units, and a credit is booked to
+            // the single unit it happened in.
+            $creditJoin .= ' AND rac.rac_period_reference BETWEEN ? AND ?';
+            $params[] = $periodRange[0];
+            $params[] = $periodRange[1];
+        }
+
+        $from = ' FROM ' . RequirementsTables::activities() . ' AS rqa
+            INNER JOIN ' . TBL_USERS . ' AS usr ON usr.usr_id = rqa.rqa_user_id
+             LEFT JOIN ' . TBL_USER_DATA . ' AS first_name
+                    ON first_name.usd_usr_id = rqa.rqa_user_id AND first_name.usd_usf_id = ?
+             LEFT JOIN ' . TBL_USER_DATA . ' AS last_name
+                    ON last_name.usd_usr_id = rqa.rqa_user_id AND last_name.usd_usf_id = ?'
+            . $creditJoin . '
+             LEFT JOIN ' . RequirementsTables::requirementTypes() . ' AS rqt
+                    ON rqt.rqt_id = rac.rac_requirement_type_id
+                 WHERE rqa.rqa_org_id = ?';
+        $params[] = (int) $gCurrentOrgId;
+
+        $userId = $filter['userId'] ?? null;
+        if (!Component::isAdministrable(RequirementsPlugin::ID)) {
+            $from .= ' AND rqa.rqa_user_id = ?';
+            $params[] = (int) $gCurrentUser->getValue('usr_id');
+        } elseif ($userId !== null) {
+            $from .= ' AND rqa.rqa_user_id = ?';
+            $params[] = $userId;
+        }
+        $query = trim((string) ($filter['query'] ?? ''));
+        if ($query !== '') {
+            $from .= ' AND (rqa.rqa_title LIKE ? OR rqa.rqa_provider_name LIKE ? OR rqa.rqa_provider_short_name LIKE ?)';
+            array_push($params, '%' . $query . '%', '%' . $query . '%', '%' . $query . '%');
+        }
+        if (($filter['providerId'] ?? null) !== null) {
+            $from .= ' AND rqa.rqa_provider_id = ?';
+            $params[] = (int) $filter['providerId'];
+        }
+        // The date range keeps every activity that touches it, so a course running over the turn of
+        // the year is found from either side.
+        if (($filter['dateFrom'] ?? '') !== '') {
+            $from .= ' AND COALESCE(rqa.rqa_end_date, rqa.rqa_begin_date) >= ?';
+            $params[] = $filter['dateFrom'];
+        }
+        if (($filter['dateTo'] ?? '') !== '') {
+            $from .= ' AND rqa.rqa_begin_date <= ?';
+            $params[] = $filter['dateTo'];
+        }
+
+        $count = (int) $this->db->queryPrepared('SELECT COUNT(*) AS cnt' . $from, $params)->fetchColumn();
+
+        $orderBy = array();
+        if (isset(self::LIST_GROUP_COLUMNS[$groupBy])) {
+            $orderBy[] = preg_replace('/ DESC$/', '', self::LIST_GROUP_COLUMNS[$groupBy][0]) . ' IS NULL';
+            array_push($orderBy, ...self::LIST_GROUP_COLUMNS[$groupBy]);
+        }
+        foreach ($order as [$column, $direction]) {
+            if (!isset(self::LIST_SORT_COLUMNS[$column])) {
+                continue;
+            }
+            $direction = strtolower($direction) === 'asc' ? 'ASC' : 'DESC';
+            foreach (self::LIST_SORT_COLUMNS[$column] as $expression) {
+                $orderBy[] = $expression . ' ' . $direction;
+            }
+        }
+        // A stable tail, so that paging never shows a row twice or skips one.
+        array_push($orderBy, 'rqa.rqa_begin_date DESC', 'rqa.rqa_id DESC', 'rac.rac_id');
+
+        $sql = 'SELECT rqa.rqa_id, rqa.rqa_uuid, rqa.rqa_org_id, rqa.rqa_user_id, rqa.rqa_title,
+                       rqa.rqa_begin_date, rqa.rqa_end_date, rqa.rqa_certificate_date, rqa.rqa_attendance,
+                       rqa.rqa_status, rqa.rqa_review_status, rqa.rqa_provider_name, rqa.rqa_provider_short_name,
+                       usr.usr_uuid AS user_uuid,
+                       first_name.usd_value AS first_name, last_name.usd_value AS last_name,
+                       rac.rac_id, rac.rac_period_reference, rac.rac_credits_claimed, rac.rac_credits_accepted,
+                       rqt.rqt_id, rqt.rqt_name, rqt.rqt_short_name, rqt.rqt_period_anchor, rqt.rqt_period_unit'
+            . $from . ' ORDER BY ' . implode(', ', $orderBy);
+        if ($length > 0) {
+            $sql .= ' LIMIT ' . $length . ' OFFSET ' . max(0, $start);
+        }
+
+        return array('count' => $count, 'rows' => $this->db->getArrayFromSql($sql, $params));
     }
 
     /**

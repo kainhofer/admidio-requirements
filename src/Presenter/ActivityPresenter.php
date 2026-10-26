@@ -8,31 +8,42 @@ use Admidio\UI\Presenter\FormPresenter;
 use Admidio\Users\Entity\User;
 use AdmidioPlugin\Requirements\Entity\Activity;
 use AdmidioPlugin\Requirements\Entity\RequirementType;
+use AdmidioPlugin\Requirements\Service\ActivityExportService;
 use AdmidioPlugin\Requirements\Service\ActivityService;
 use AdmidioPlugin\Requirements\Service\ActivityFileService;
 use AdmidioPlugin\Requirements\Service\FulfilmentService;
 use AdmidioPlugin\Requirements\Service\ProviderService;
 use AdmidioPlugin\Requirements\Service\RequirementTypeService;
 use AdmidioPlugin\Requirements\RequirementsPlugin;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 /**
  * Activity list (with the fulfilment overview widget on top) and activity edit form.
  */
 class ActivityPresenter extends RequirementsPresenter
 {
+    private static function currentUserId(): int
+    {
+        return (int) $GLOBALS['gCurrentUser']->getValue('usr_id');
+    }
+
     /**
      * Requirement types that should have a credit input on the edit form: every active type plus
-     * every type this activity already carries a credit for.
+     * every type this activity already carries a credit for. The member's own requirements are
+     * those of the member the activity belongs to, and somebody else editing it - an administrator -
+     * sees only those of them the activity already carries a credit for.
      *
      * @return array<int,array<string,mixed>>
      */
-    private function creditableTypes(array $existingCredits): array
+    private function creditableTypes(array $existingCredits, int $ownerId): array
     {
         global $gDb;
 
         $types = array();
-        foreach ((new RequirementTypeService($gDb))->findTypes() as $type) {
-            if ((bool) $type['rqt_active'] || array_key_exists((int) $type['rqt_id'], $existingCredits)) {
+        foreach ((new RequirementTypeService($gDb))->findTypes('', $ownerId) as $type) {
+            $credited = array_key_exists((int) $type['rqt_id'], $existingCredits);
+            $foreign = (int) $type['rqt_usr_id'] > 0 && $ownerId !== self::currentUserId();
+            if ($credited || ((bool) $type['rqt_active'] && !$foreign)) {
                 $types[] = $type;
             }
         }
@@ -40,15 +51,149 @@ class ActivityPresenter extends RequirementsPresenter
     }
 
     /**
+     * The columns of the activity table in display order, as key, label, whether a member sees it
+     * before choosing their own columns, and whether it sorts. The key is the column's name for
+     * DataTables and the field of a row in listData().
+     *
+     * @return array<int,array{key:string,label:string,visible:bool,sortable:bool}>
+     */
+    private function listColumns(): array
+    {
+        global $gDb, $gL10n;
+
+        $columns = array(
+            array('key' => 'period', 'label' => $gL10n->get('PLG_REQUIREMENTS_CREDITED_PERIOD'), 'visible' => true),
+            array('key' => 'date', 'label' => $gL10n->get('SYS_DATE'), 'visible' => true),
+            array('key' => 'title', 'label' => $gL10n->get('SYS_TITLE'), 'visible' => true),
+            // With a single requirement type the column would say the same thing on every row.
+            array('key' => 'requirement', 'label' => $gL10n->get('PLG_REQUIREMENTS_REQUIREMENT_TYPE'),
+                'visible' => count((new RequirementTypeService($gDb))->findTypes('', self::currentUserId())) > 1),
+            array('key' => 'credits', 'label' => $gL10n->get('PLG_REQUIREMENTS_CREDITS'), 'visible' => true),
+            array('key' => 'provider', 'label' => $gL10n->get('PLG_REQUIREMENTS_PROVIDER'), 'visible' => true)
+        );
+        if ($this->isAdmin()) {
+            $columns[] = array('key' => 'member', 'label' => $gL10n->get('SYS_MEMBER'), 'visible' => true);
+        }
+        $columns[] = array('key' => 'attendance', 'label' => $gL10n->get('PLG_REQUIREMENTS_ATTENDANCE'), 'visible' => false);
+        $columns[] = array('key' => 'certificate', 'label' => $gL10n->get('PLG_REQUIREMENTS_CERTIFICATE_DATE'), 'visible' => false);
+        if (ActivityFileService::isEnabled()) {
+            $columns[] = array('key' => 'files', 'label' => $gL10n->get('PLG_REQUIREMENTS_FILES'), 'visible' => true);
+        }
+
+        foreach ($columns as $i => $column) {
+            $columns[$i]['sortable'] = $column['key'] !== 'files';
+        }
+        return $columns;
+    }
+
+    /**
+     * The narrowing a link to the list may carry, resolved: the requirement, the member and the
+     * credited period. Shared by the page, which prints what it is narrowed to, and by listData(),
+     * which applies it - so the two cannot disagree about an unknown UUID.
+     *
+     * @return array{type:?array,userId:?int,userName:string,periodRange:?array,periodLabel:string}
+     * @throws Exception
+     */
+    private function resolveListFilter(
+        string $requirementUuid,
+        string $period,
+        string $userUuid,
+        string $periodTo = ''
+    ): array {
+        global $gDb, $gProfileFields, $gSettingsManager;
+
+        $selectedType = null;
+        if ($requirementUuid !== '') {
+            foreach ((new RequirementTypeService($gDb))->findTypes('', self::currentUserId()) as $t) {
+                if ($t['rqt_uuid'] === $requirementUuid) {
+                    $selectedType = $t;
+                    break;
+                }
+            }
+        }
+
+        // Administrators arrive here from a row of the review roster, which asks for the activities
+        // of one member. A normal member never gets past the record check in findActivityRows(), so
+        // the parameter is only resolved for an administrator in the first place.
+        $userId = null;
+        $userName = '';
+        if ($userUuid !== '' && $this->isAdmin()) {
+            $filterUser = new User($gDb, $gProfileFields);
+            $filterUser->readDataByUuid($userUuid);
+            $candidateId = (int) $filterUser->getValue('usr_id');
+            // Not isMemberOfOrganization() on its own: the review links to members who have left the
+            // role, and they still have the activities it sent us here to look at. isKnownMember()
+            // is that population, and it keeps a name from another organization off the page.
+            if ($candidateId > 0 && (new ActivityService($gDb))->isKnownMember($candidateId)) {
+                $userId = $candidateId;
+                $userName = $filterUser->readableName();
+            }
+        }
+
+        // A period narrows the list to the activities that made up one bar of the overview. It only
+        // means anything together with a requirement, and it is normalised so that a link built from
+        // any day of the period finds the same contributions.
+        $periodRange = null;
+        $periodLabel = '';
+        if ($period !== '' && $selectedType !== null) {
+            $typeEntity = new RequirementType($gDb);
+            $typeEntity->setArray($selectedType);
+            try {
+                // A recurring requirement has no calendar period: its bar is a renewal cycle, and the
+                // link names the contributions of that cycle directly. An open end is the cycle under
+                // way, which takes every contribution from its start on.
+                if ((string) $typeEntity->getValue('rqt_period_anchor') === 'last_fulfilment') {
+                    $format = $gSettingsManager->getString('system_date');
+                    $from = new \DateTimeImmutable($period);
+                    $periodRange = array($period, $periodTo === '' ? '9999-12-31' : $periodTo);
+                    $periodLabel = $from->format($format) . ' – '
+                        . ($periodTo === '' ? '' : (new \DateTimeImmutable($periodTo))->format($format));
+                    return array(
+                        'type' => $selectedType,
+                        'userId' => $userId,
+                        'userName' => $userName,
+                        'periodRange' => $periodRange,
+                        'periodLabel' => $periodLabel
+                    );
+                }
+                // The link carries the unit the period opens in; the period itself may be a rolling
+                // window of several units, so the filter is the whole window and the label says so.
+                $opens = FulfilmentService::normalizePeriodReference($typeEntity, $period);
+                [$windowStart, $windowEnd, $periodLabel] = FulfilmentService::periodFor(
+                    $typeEntity,
+                    new \DateTimeImmutable($opens)
+                );
+                $periodRange = array($windowStart->format('Y-m-d'), $windowEnd->format('Y-m-d'));
+            } catch (Exception) {
+                $periodRange = null;
+                $periodLabel = '';
+            }
+        }
+
+        return array(
+            'type' => $selectedType,
+            'userId' => $userId,
+            'userName' => $userName,
+            'periodRange' => $periodRange,
+            'periodLabel' => $periodLabel
+        );
+    }
+
+    /**
+     * The activity page: the fulfilment overview, the filter bar and an empty table that DataTables
+     * fills page by page from `index.php?mode=data`, which is listData().
+     *
      * @throws Exception|\Smarty\Exception
      */
     public function createList(
         string $query = '',
         string $requirementUuid = '',
         string $period = '',
-        string $userUuid = ''
+        string $userUuid = '',
+        string $periodTo = '',
+        int $overviewOffset = 0
     ): void {
-        global $gDb, $gL10n, $gCurrentUser, $gProfileFields;
+        global $gDb, $gL10n, $gCurrentUser;
 
         $this->setHtmlID('adm_requirements_activities');
         $this->setHeadline($gL10n->get('PLG_REQUIREMENTS_ACTIVITIES'));
@@ -56,45 +201,27 @@ class ActivityPresenter extends RequirementsPresenter
         $userId = (int) $gCurrentUser->getValue('usr_id');
         $isAdmin = $this->isAdmin();
         $fulfilment = new FulfilmentService($gDb);
-        $applicableIds = $fulfilment->applicableRequirementTypeIds($userId);
-        $allTypes = (new RequirementTypeService($gDb))->findTypes();
-
-        // Requirement-type filter — default to the first applicable type, then any type.
-        $selectedType = null;
-        foreach ($allTypes as $t) {
-            if ($requirementUuid !== '' && $t['rqt_uuid'] === $requirementUuid) {
-                $selectedType = $t;
-                break;
-            }
-        }
-        if ($selectedType === null) {
-            foreach ($allTypes as $t) {
-                if (in_array((int) $t['rqt_id'], $applicableIds, true)) {
-                    $selectedType = $t;
-                    break;
-                }
-            }
-            $selectedType ??= $allTypes[0] ?? null;
-        }
-        $selectedTypeId = $selectedType !== null ? (int) $selectedType['rqt_id'] : null;
-        $selectedKind = 'date';
-        if ($selectedType !== null) {
-            $typeEntity = new RequirementType($gDb);
-            $typeEntity->setArray($selectedType);
-            $selectedKind = FulfilmentService::periodControlKind($typeEntity);
-        }
+        $allTypes = (new RequirementTypeService($gDb))->findTypes('', $userId);
+        $filter = $this->resolveListFilter($requirementUuid, $period, $userUuid, $periodTo);
 
         $typeOptions = array();
         foreach ($allTypes as $t) {
             $typeOptions[] = array(
                 'uuid' => $t['rqt_uuid'],
                 'name' => SecurityUtils::encodeHTML((string) $t['rqt_name']),
-                'selected' => $selectedType !== null && $t['rqt_uuid'] === $selectedType['rqt_uuid']
+                'selected' => $filter['type'] !== null && $t['rqt_uuid'] === $filter['type']['rqt_uuid']
             );
         }
-        $this->assignSmartyVariable('searchUrl', $this->plugin->getUrl('index.php'));
+        $providerOptions = array();
+        foreach ((new ProviderService($gDb))->findVisible() as $provider) {
+            $providerOptions[] = array(
+                'uuid' => $provider['rqp_uuid'],
+                'name' => SecurityUtils::encodeHTML((string) $provider['rqp_name'])
+            );
+        }
         $this->assignSmartyVariable('query', $query);
         $this->assignSmartyVariable('typeOptions', $typeOptions);
+        $this->assignSmartyVariable('providerOptions', $providerOptions);
         $this->assignSmartyVariable('searchPlaceholder', $gL10n->get('PLG_REQUIREMENTS_SEARCH_ACTIVITIES'));
 
         $this->addPageFunctionsMenuItem(
@@ -111,6 +238,12 @@ class ActivityPresenter extends RequirementsPresenter
             $this->pageUrl('import.php'),
             'bi-upload'
         );
+        $this->addPageFunctionsMenuItem(
+            'menu_item_requirements_own',
+            $gL10n->get('PLG_REQUIREMENTS_OWN_REQUIREMENTS'),
+            $this->pageUrl('own.php'),
+            'bi-person-check'
+        );
         if ($isAdmin) {
             $this->addPageFunctionsMenuItem('menu_item_requirements_review',
                 $gL10n->get('PLG_REQUIREMENTS_REVIEW'), $this->pageUrl('review.php'), 'bi-clipboard-data');
@@ -121,29 +254,14 @@ class ActivityPresenter extends RequirementsPresenter
             $this->addHistoryMenuItem('activities', array('req_activities', 'req_activity_credits'));
         }
 
-        // Administrators arrive here from a row of the review roster, which asks for the activities
-        // of one member. A normal member never gets past the record check in findActivities(), so
-        // the parameter is only resolved for an administrator in the first place.
-        $filterUserId = null;
-        $filterUserName = '';
-        if ($userUuid !== '' && $isAdmin) {
-            $filterUser = new User($gDb, $gProfileFields);
-            $filterUser->readDataByUuid($userUuid);
-            $candidateId = (int) $filterUser->getValue('usr_id');
-            // Not isMemberOfOrganization() on its own: the review links to members who have left the
-            // role, and they still have the activities it sent us here to look at. isKnownMember()
-            // is that population, and it keeps a name from another organization off the page.
-            if ($candidateId > 0 && (new ActivityService($gDb))->isKnownMember($candidateId)) {
-                $filterUserId = $candidateId;
-                $filterUserName = $filterUser->readableName();
-            }
-        }
-        $this->assignSmartyVariable('userUuid', $filterUserId === null ? '' : $userUuid);
-        $this->assignSmartyVariable('userLabel', SecurityUtils::encodeHTML($filterUserName));
+        $effectiveUserUuid = $filter['userId'] === null ? '' : $userUuid;
+        $this->assignSmartyVariable('userLabel', SecurityUtils::encodeHTML($filter['userName']));
 
         // Fulfilment overview bars — running + N previous periods, applicable requirements only.
         $previousPeriods = (int) (RequirementsPlugin::setting(RequirementsPlugin::SETTING_OVERVIEW_PREVIOUS_YEARS) ?? 4);
-        $overview = $fulfilment->coverageHistoryForUser($userId, $previousPeriods);
+        $overviewOffset = max(0, $overviewOffset);
+        $overview = $fulfilment->coverageHistoryForUser($userId, $previousPeriods, $overviewOffset);
+        $hasEarlier = false;
         // Each bar links to the activities that make it up, which is the answer to "where does this
         // number come from" - the question a bar always raises and never answers on its own.
         foreach ($overview as $i => $requirement) {
@@ -154,58 +272,38 @@ class ActivityPresenter extends RequirementsPresenter
                     break;
                 }
             }
+            $hasEarlier = $hasEarlier || $requirement['hasEarlier'];
             foreach ($requirement['periods'] as $j => $periodRow) {
                 $overview[$i]['periods'][$j]['url'] = $uuid === '' || $periodRow['periodReference'] === null
                     ? ''
-                    : $this->pageUrl('index.php', array(
+                    : $this->pageUrl('index.php', array_filter(array(
                         'mode' => 'list',
                         'requirement' => $uuid,
-                        'period' => $periodRow['periodReference']
-                    ));
+                        'period' => $periodRow['periodReference'],
+                        'period_to' => $periodRow['periodTo'] ?? ''
+                    ), static fn($value): bool => $value !== ''));
             }
         }
         $this->assignSmartyVariable('overview', $overview);
+        // Paging through the overview keeps whatever narrows the list below it.
+        $overviewUrl = fn(int $offset): string => $this->pageUrl('index.php', array_filter(array(
+            'mode' => 'list',
+            'query' => $query,
+            'requirement' => $requirementUuid,
+            'period' => $period,
+            'period_to' => $periodTo,
+            'user' => $userUuid,
+            'overview' => $offset
+        ), static fn($value): bool => $value !== '' && $value !== 0));
+        $this->assignSmartyVariable('overviewEarlierUrl', $hasEarlier ? $overviewUrl($overviewOffset + 1) : '');
+        $this->assignSmartyVariable('overviewLaterUrl', $overviewOffset > 0 ? $overviewUrl($overviewOffset - 1) : '');
         // Say so rather than silently hiding the card when nothing applies to this member.
         $this->assignSmartyVariable(
             'overviewHint',
             $overview === array() && $allTypes !== array() ? $gL10n->get('PLG_REQUIREMENTS_OVERVIEW_NONE') : ''
         );
 
-        // Table: title | credited period + credits for the selected requirement | provider
-        $headers = array(
-            $gL10n->get('SYS_TITLE'),
-            $gL10n->get('PLG_REQUIREMENTS_CREDITED_PERIOD'),
-            $gL10n->get('PLG_REQUIREMENTS_CREDITS_CLAIMED')
-        );
-        if ($isAdmin) {
-            $headers[] = $gL10n->get('PLG_REQUIREMENTS_CREDITS_ACCEPTED');
-        }
-        $headers[] = $gL10n->get('PLG_REQUIREMENTS_PROVIDER');
-        $headers[] = '';
-
-        // A period narrows the list to the activities that made up one bar of the overview. It only
-        // means anything together with a requirement, and it is normalised so that a link built from
-        // any day of the period finds the same contributions.
-        $periodFilter = null;
-        $periodLabel = '';
-        if ($period !== '' && $selectedType !== null) {
-            $typeEntity = new RequirementType($gDb);
-            $typeEntity->setArray($selectedType);
-            try {
-                // The link carries the unit the period opens in; the period itself may be a rolling
-                // window of several units, so the filter is the whole window and the label says so.
-                $opens = FulfilmentService::normalizePeriodReference($typeEntity, $period);
-                [$windowStart, $windowEnd, $periodLabel] = FulfilmentService::periodFor(
-                    $typeEntity,
-                    new \DateTimeImmutable($opens)
-                );
-                $periodFilter = array($windowStart->format('Y-m-d'), $windowEnd->format('Y-m-d'));
-            } catch (Exception) {
-                $periodFilter = null;
-                $periodLabel = '';
-            }
-        }
-        $this->assignSmartyVariable('periodLabel', $periodLabel);
+        $this->assignSmartyVariable('periodLabel', $filter['periodRange'] === null ? '' : $filter['periodLabel']);
         // One way out of both narrowings: a member filter and a period filter are two halves of the
         // same "I followed a link to get here", and clearing one and not the other only puzzles.
         $this->assignSmartyVariable('clearFilterUrl', $this->pageUrl('index.php', array(
@@ -214,74 +312,595 @@ class ActivityPresenter extends RequirementsPresenter
             'requirement' => $requirementUuid
         )));
 
-        $rows = array();
-        foreach ((new ActivityService($gDb))->findActivities($filterUserId, $query, $selectedTypeId, $periodFilter) as $activity) {
-            $rowId = 'adm_requirements_activity_' . $activity['rqa_uuid'];
-            $editUrl = $this->pageUrl('index.php', array('mode' => 'edit', 'uuid' => $activity['rqa_uuid']));
+        $columns = $this->listColumns();
+        $this->assignSmartyVariable('columns', $columns);
+        $this->assignSmartyVariable('filesEnabled', ActivityFileService::isEnabled());
+        $this->assignSmartyVariable('groupOptions', array(
+            '' => $gL10n->get('SYS_NONE'),
+            'period' => $gL10n->get('PLG_REQUIREMENTS_CREDITED_PERIOD'),
+            'requirement' => $gL10n->get('PLG_REQUIREMENTS_REQUIREMENT_TYPE'),
+            'provider' => $gL10n->get('PLG_REQUIREMENTS_PROVIDER'),
+            'begin' => $gL10n->get('PLG_REQUIREMENTS_BEGIN_DATE'),
+            'end' => $gL10n->get('PLG_REQUIREMENTS_END_DATE'),
+            'certificate' => $gL10n->get('PLG_REQUIREMENTS_CERTIFICATE_DATE')
+        ));
+        $this->assignSmartyVariable('granularityOptions', array(
+            'year' => $gL10n->get('PLG_REQUIREMENTS_PERIOD_YEAR'),
+            'quarter' => $gL10n->get('PLG_REQUIREMENTS_PERIOD_QUARTER'),
+            'month' => $gL10n->get('SYS_MONTH')
+        ));
+
+        $this->addJavascriptFile(ADMIDIO_URL . FOLDER_LIBS . '/datatables/datatables.js');
+        $this->addCssFile(ADMIDIO_URL . FOLDER_LIBS . '/datatables/datatables.css');
+        $langCode = $gL10n->getLanguageIsoCode() ?: 'en';
+        $config = array(
+            'dataUrl' => $this->pageUrl('index.php', array('mode' => 'data')),
+            'exportUrl' => $this->pageUrl('index.php', array('mode' => 'export')),
+            // Changing the requirement while a period from the overview narrows the list starts over
+            // from the page: the period belongs to the requirement it was chosen for.
+            'listUrl' => $this->pageUrl('index.php', array('mode' => 'list', 'user' => $effectiveUserUuid)),
+            'languageUrl' => ADMIDIO_URL . FOLDER_LIBS . '/datatables/language/datatables.' . $langCode . '.json',
+            'emptyTable' => $gL10n->get('SYS_NO_ENTRIES'),
+            'allLabel' => $gL10n->get('SYS_ALL'),
+            'user' => $effectiveUserUuid,
+            'period' => $filter['periodRange'] === null ? '' : $period,
+            'periodTo' => $filter['periodRange'] === null ? '' : $periodTo,
+            'columns' => array_map(
+                static fn(array $c): array => array('key' => $c['key'], 'sortable' => $c['sortable']),
+                $columns
+            ),
+            'hiddenByDefault' => array_values(array_map(
+                static fn(array $c): string => $c['key'],
+                array_filter($columns, static fn(array $c): bool => !$c['visible'])
+            ))
+        );
+
+        // Submitting or deleting an activity changes the overview as well as the row, so the page is
+        // redrawn rather than letting callUrlHideElement() fade a row out.
+        $this->addJavascript('function admReqReloadPage() { window.location.reload(); }');
+        $this->addJavascript('
+            const admReqConfig = ' . json_encode($config) . ';
+            const admReqStoreKey = "admReqActivitiesList";
+            let admReqState = {};
+            try {
+                admReqState = JSON.parse(window.localStorage.getItem(admReqStoreKey)) || {};
+            } catch (e) {
+                admReqState = {};
+            }
+            function admReqSaveState() {
+                try {
+                    window.localStorage.setItem(admReqStoreKey, JSON.stringify(admReqState));
+                } catch (e) {
+                    // Private windows refuse the storage; the choice then lasts for this page only.
+                }
+            }
+            let admReqHidden = Array.isArray(admReqState.hidden) ? admReqState.hidden : admReqConfig.hiddenByDefault;
+            // Grouped by the credited period until the viewer chooses otherwise: the period is what
+            // a requirement is fulfilled in, so it is the first question the list answers.
+            $("#adm_req_group").val(typeof admReqState.group === "string" ? admReqState.group : "period");
+            if (typeof admReqState.granularity === "string") { $("#adm_req_granularity").val(admReqState.granularity); }
+            function admReqToggleGranularity() {
+                $("#adm_req_granularity_wrap").toggle(["begin", "end", "certificate"].indexOf($("#adm_req_group").val()) >= 0);
+            }
+            admReqToggleGranularity();
+            $(".adm-req-col-toggle").each(function () {
+                $(this).prop("checked", admReqHidden.indexOf($(this).data("column")) < 0);
+            });
+            // A column that only repeats the heading of its group is left out while the table is
+            // grouped by it. A date group is a year, quarter or month, so the day stays in its column.
+            const admReqGroupColumns = { period: "period", requirement: "requirement", provider: "provider" };
+            function admReqShown(key) {
+                return admReqHidden.indexOf(key) < 0 && admReqGroupColumns[$("#adm_req_group").val()] !== key;
+            }
+            // A heading row per group: its label across the columns before Credits, the total of the
+            // group under Credits, and an empty cell for the rest. Without a Credits column on show
+            // the total goes to the right end of the label.
+            function admReqGroupHeadings(api) {
+                $("#adm_req_activities_table tbody tr.admidio-group-heading").remove();
+                if ($("#adm_req_group").val() === "") {
+                    return;
+                }
+                const responsive = typeof api.columns().responsiveHidden === "function"
+                    ? api.columns().responsiveHidden().toArray() : null;
+                const shown = [];
+                api.columns().every(function (i) {
+                    if (this.visible() && (responsive === null || responsive[i])) {
+                        shown.push(this.dataSrc());
+                    }
+                });
+                const creditsAt = shown.indexOf("credits");
+                // The total takes the classes of the Credits cells, and with them their alignment.
+                const creditsClass = creditsAt > 0
+                    ? ($(api.column("credits:name").nodes()).first().attr("class") || "") : "";
+                const rows = api.rows({ page: "current" }).nodes();
+                let last = null;
+                api.rows({ page: "current" }).data().each(function (row, i) {
+                    if (row.group === last) {
+                        return;
+                    }
+                    last = row.group;
+                    const heading = $("<tr class=\"admidio-group-heading fw-bold\"></tr>");
+                    if (creditsAt > 0) {
+                        heading.append($("<td></td>").attr("colspan", creditsAt).html(row.group));
+                        heading.append($("<td></td>").addClass(creditsClass).html(row.groupTotal));
+                        if (shown.length - creditsAt - 1 > 0) {
+                            heading.append($("<td></td>").attr("colspan", shown.length - creditsAt - 1));
+                        }
+                    } else {
+                        heading.append($("<td></td>").attr("colspan", shown.length).html(row.group
+                            + (row.groupTotal === "" ? "" : "<span class=\"float-end\">" + row.groupTotal + "</span>")));
+                    }
+                    $(rows).eq(i).before(heading);
+                });
+            }
+            function admReqApplyColumns() {
+                admReqConfig.columns.forEach(function (c) {
+                    admReqTable.column(c.key + ":name").visible(admReqShown(c.key), false);
+                });
+                admReqTable.columns.adjust();
+                $("#adm_req_activities_table").toggleClass("adm-req-grouped", $("#adm_req_group").val() !== "");
+                $(".adm-req-col-toggle").each(function () {
+                    $(this).prop("disabled", admReqGroupColumns[$("#adm_req_group").val()] === $(this).data("column"));
+                });
+                admReqGroupHeadings(admReqTable);
+            }
+
+            const admReqTable = $("#adm_req_activities_table").DataTable({
+                serverSide: true,
+                processing: true,
+                searching: false,
+                responsive: true,
+                fixedHeader: true,
+                autoWidth: false,
+                language: { url: admReqConfig.languageUrl, emptyTable: admReqConfig.emptyTable },
+                pageLength: 25,
+                lengthMenu: [[10, 25, 50, 100, -1], [10, 25, 50, 100, admReqConfig.allLabel]],
+                order: [[1, "desc"]],
+                ajax: {
+                    url: admReqConfig.dataUrl,
+                    data: function (d) {
+                        d.requirement = $("#adm_req_requirement").val();
+                        d.provider = $("#adm_req_provider").val();
+                        d.from = $("#adm_req_from").val();
+                        d.to = $("#adm_req_to").val();
+                        d.query = $("#adm_req_query").val();
+                        d.group = $("#adm_req_group").val();
+                        d.granularity = $("#adm_req_granularity").val();
+                        d.user = admReqConfig.user;
+                        d.period = admReqConfig.period;
+                        d.period_to = admReqConfig.periodTo;
+                    }
+                },
+                columns: admReqConfig.columns.map(function (c) {
+                    return { data: c.key, name: c.key, orderable: c.sortable, visible: admReqShown(c.key) };
+                }).concat([{ data: "actions", orderable: false, className: "text-end text-nowrap" }]),
+                drawCallback: function () {
+                    admReqGroupHeadings(this.api());
+                }
+            });
+            // The group headings are laid out over the columns that are showing, so they are
+            // rebuilt whenever that changes - by the column menu or by the responsive layout.
+            admReqTable.on("responsive-resize", function () {
+                admReqGroupHeadings(admReqTable);
+            });
+            admReqApplyColumns();
+            // The rows arrive after the page has set up its tooltips.
+            $("#adm_req_activities_table").on("draw.dt", function () {
+                this.querySelectorAll("[data-bs-toggle=\"tooltip\"]").forEach(function (el) {
+                    bootstrap.Tooltip.getOrCreateInstance(el);
+                });
+            });
+
+            let admReqQueryTimer = null;
+            $("#adm_req_query").on("input", function () {
+                clearTimeout(admReqQueryTimer);
+                admReqQueryTimer = setTimeout(function () { admReqTable.ajax.reload(); }, 300);
+            });
+            $("#adm_req_provider, #adm_req_from, #adm_req_to").on("change", function () {
+                admReqTable.ajax.reload();
+            });
+            $("#adm_req_requirement").on("change", function () {
+                if (admReqConfig.period !== "") {
+                    window.location.href = admReqConfig.listUrl + "&requirement=" + encodeURIComponent($(this).val());
+                    return;
+                }
+                admReqTable.ajax.reload();
+            });
+            $("#adm_req_group, #adm_req_granularity").on("change", function () {
+                admReqState.group = $("#adm_req_group").val();
+                admReqState.granularity = $("#adm_req_granularity").val();
+                admReqSaveState();
+                admReqToggleGranularity();
+                admReqApplyColumns();
+                admReqTable.ajax.reload();
+            });
+            $("#adm_req_view_reset").on("click", function () {
+                try {
+                    window.localStorage.removeItem(admReqStoreKey);
+                } catch (e) {
+                    // Nothing was stored, then.
+                }
+                window.location.reload();
+            });
+            $(".adm-req-col-toggle").on("change", function () {
+                const key = $(this).data("column");
+                admReqHidden = admReqHidden.filter(function (k) { return k !== key; });
+                if (!$(this).is(":checked")) {
+                    admReqHidden.push(key);
+                }
+                admReqState.hidden = admReqHidden;
+                admReqSaveState();
+                admReqApplyColumns();
+            });
+            $("#adm_req_filter").on("submit", function (e) { e.preventDefault(); });
+            // The export takes the filters the table is showing, so the file is the list on screen.
+            $(".adm-req-export").on("click", function () {
+                const params = admReqTable.ajax.params();
+                const keep = ["requirement", "provider", "from", "to", "query", "user", "period", "period_to"];
+                const query = keep.reduce(function (p, k) {
+                    p[k] = params[k];
+                    return p;
+                }, {});
+                if ($(this).data("certificates")) {
+                    query.certificates = 1;
+                }
+                window.location.href = admReqConfig.exportUrl + "&" + $.param(query);
+            });
+        ', true);
+
+        $this->addHtmlByTemplate('requirements.activities.list.tpl');
+    }
+
+    /**
+     * One page of the activity table as DataTables asks for it (server-side processing).
+     *
+     * @param array{requirement:string,period:string,user:string,query:string,provider:string,
+     *     from:string,to:string,group:string,granularity:string} $filters the filter bar and the
+     *     narrowing the page was opened with
+     * @param array<int,array{0:string,1:string}> $order column key and direction, as the table asked
+     * @return array<string,mixed> the DataTables response without `draw`
+     * @throws Exception
+     */
+    public function listData(array $filters, array $order, int $start, int $length): array
+    {
+        global $gDb, $gL10n, $gSettingsManager;
+
+        $filter = $this->resolveListFilter(
+            $filters['requirement'],
+            $filters['period'],
+            $filters['user'],
+            $filters['periodTo'] ?? ''
+        );
+        $groupBy = $filters['group'];
+        $notSet = SecurityUtils::encodeHTML($gL10n->get('PLG_REQUIREMENTS_NOT_SPECIFIED'));
+        $service = new ActivityService($gDb);
+        $groupTotals = array();
+        if ($groupBy === '') {
+            $result = $service->findActivityRows($this->serviceFilter($filters, $filter), '', $order, $start, $length);
+        } else {
+            // A group may run on over several pages, and its heading shows the total of all of it -
+            // so a grouped list reads every row it filters, totals the groups, and only then cuts
+            // out the page. The groups are runs of consecutive rows, so the cut keeps them whole.
+            $result = $service->findActivityRows($this->serviceFilter($filters, $filter), $groupBy, $order);
+            foreach ($result['rows'] as $row) {
+                if ($row['rac_id'] === null) {
+                    continue;
+                }
+                $label = $this->groupLabel($row, $groupBy, $filters['granularity'], $filter['type'] === null, $notSet);
+                $requirement = self::requirementName($row);
+                $groupTotals[$label][$requirement]['claimed'] =
+                    ($groupTotals[$label][$requirement]['claimed'] ?? 0.0) + (float) $row['rac_credits_claimed'];
+                $groupTotals[$label][$requirement]['credited'] =
+                    ($groupTotals[$label][$requirement]['credited'] ?? 0.0)
+                    + (float) ($row['rac_credits_accepted'] ?? $row['rac_credits_claimed']);
+            }
+            $result['rows'] = array_slice($result['rows'], max(0, $start), $length > 0 ? $length : null);
+        }
+
+        $dateFormat = $gSettingsManager->getString('system_date');
+        $formatDate = static fn(?string $ymd): string => $ymd === null || $ymd === ''
+            ? '' : \DateTimeImmutable::createFromFormat('!Y-m-d', substr($ymd, 0, 10))->format($dateFormat);
+        $filesByActivity = ActivityFileService::isEnabled()
+            ? (new ActivityFileService($gDb))->listForActivities(array_column($result['rows'], 'rqa_id'))
+            : array();
+
+        $data = array();
+        foreach ($result['rows'] as $row) {
+            $editUrl = $this->pageUrl('index.php', array('mode' => 'edit', 'uuid' => $row['rqa_uuid']));
+            $rowId = 'adm_requirements_activity_' . $row['rqa_uuid'] . '_' . (int) $row['rac_id'];
 
             $entity = new Activity($gDb);
-            $entity->setArray($activity);
+            $entity->setArray($row);
             $editable = $entity->isEditable();
 
-            $periodText = '';
-            if ($activity['rac_period_reference'] !== null) {
-                $parts = FulfilmentService::periodControlValue($selectedKind, (string) $activity['rac_period_reference']);
-                $periodText = $parts['quarter'] !== '' ? $parts['value'] . ' Q' . $parts['quarter'] : $parts['value'];
-            }
-            $provider = (string) ($activity['rqa_provider_short_name'] ?? '');
-            if ($provider === '') {
-                $provider = (string) ($activity['rqa_provider_name'] ?? '');
+            $periodText = self::periodText($row);
+            $requirement = self::requirementName($row);
+            $provider = self::providerName($row);
+
+            $date = $formatDate($row['rqa_begin_date']);
+            if ($row['rqa_end_date'] !== null && $row['rqa_end_date'] !== $row['rqa_begin_date']) {
+                $date .= ' – ' . $formatDate($row['rqa_end_date']);
             }
 
-            $data = array(
-                '<a href="' . $editUrl . '">' . SecurityUtils::encodeHTML((string) $activity['rqa_title']) . '</a>',
-                SecurityUtils::encodeHTML($periodText),
-                self::formatCredits($activity['rac_credits_claimed'])
-            );
-            if ($isAdmin) {
-                $data[] = self::formatCredits($activity['rac_credits_accepted']);
+            $group = '';
+            $groupTotal = '';
+            if ($groupBy !== '') {
+                $group = $this->groupLabel($row, $groupBy, $filters['granularity'], $filter['type'] === null, $notSet);
+                $groupTotal = self::groupTotal($groupTotals[$group] ?? array());
             }
-            $data[] = SecurityUtils::encodeHTML($provider);
 
+            // The confirmation is shown as HTML, the text around the title is markup of its own,
+            // and the title is what the member typed.
+            $title = SecurityUtils::encodeHTML((string) $row['rqa_title']);
             $actions = array();
             $actions[] = array('url' => $editUrl, 'icon' => 'bi bi-pencil-square', 'tooltip' => $gL10n->get('SYS_EDIT'));
             // A draft only exists under the until_submitted policy, where submitting is what hands
             // the activity over for review - and the only way out of draft for its owner.
-            if ($editable && (string) $activity['rqa_status'] === 'draft') {
+            if ($editable && (string) $row['rqa_status'] === 'draft') {
                 $actions[] = $this->confirmedPostAction(
                     $rowId,
-                    $this->pageUrl('index.php', array('mode' => 'submit', 'uuid' => $activity['rqa_uuid'])),
-                    $gL10n->get('PLG_REQUIREMENTS_SUBMIT_CONFIRM', array($activity['rqa_title'])),
+                    $this->pageUrl('index.php', array('mode' => 'submit', 'uuid' => $row['rqa_uuid'])),
+                    $gL10n->get('PLG_REQUIREMENTS_SUBMIT_CONFIRM', array($title)),
                     'bi bi-send',
                     $gL10n->get('PLG_REQUIREMENTS_SUBMIT'),
                     'admReqReloadPage'
                 );
             }
             if ($editable) {
-                $actions[] = $this->deleteAction(
+                $actions[] = $this->confirmedPostAction(
                     $rowId,
-                    $this->pageUrl('index.php', array('mode' => 'delete', 'uuid' => $activity['rqa_uuid'])),
-                    $gL10n->get('SYS_WANT_DELETE_ENTRY', array($activity['rqa_title']))
+                    $this->pageUrl('index.php', array('mode' => 'delete', 'uuid' => $row['rqa_uuid'])),
+                    $gL10n->get('SYS_WANT_DELETE_ENTRY', array($title)),
+                    'bi bi-trash',
+                    $gL10n->get('SYS_DELETE'),
+                    'admReqReloadPage'
                 );
             }
 
-            $rows[] = array(
-                'id' => $rowId,
-                'uuid' => $activity['rqa_uuid'],
-                'data' => $data,
-                'actions' => $actions,
-                'statusIcon' => $this->statusIcon($activity)
+            $data[] = array(
+                'DT_RowId' => $rowId,
+                'group' => $group,
+                'groupTotal' => $groupTotal,
+                'period' => SecurityUtils::encodeHTML($periodText),
+                'date' => SecurityUtils::encodeHTML($date),
+                'title' => '<a href="' . $editUrl . '">' . SecurityUtils::encodeHTML((string) $row['rqa_title']) . '</a>',
+                'requirement' => $requirement === '' ? '' : '<span title="' . SecurityUtils::encodeHTML((string) $row['rqt_name'])
+                    . '">' . SecurityUtils::encodeHTML($requirement) . '</span>',
+                'credits' => $row['rac_id'] === null ? '' : self::creditsCell($row['rac_credits_claimed'], $row['rac_credits_accepted']),
+                'provider' => SecurityUtils::encodeHTML($provider),
+                'member' => '<a href="' . $this->pageUrl('index.php', array('mode' => 'list', 'user' => $row['user_uuid'])) . '">'
+                    . SecurityUtils::encodeHTML(trim($row['last_name'] . ', ' . $row['first_name'], ', ')) . '</a>',
+                'attendance' => (float) $row['rqa_attendance'] > 0 ? self::formatCredits($row['rqa_attendance']) : '',
+                'certificate' => SecurityUtils::encodeHTML($formatDate($row['rqa_certificate_date'])),
+                'files' => $this->filesCell($filesByActivity[(int) $row['rqa_id']] ?? array()),
+                'actions' => $this->statusIcon($row) . self::actionsHtml($actions)
             );
         }
 
-        // Submitting changes a row rather than removing it, so the list is redrawn instead of
-        // letting callUrlHideElement() fade the row out.
-        $this->addJavascript('function admReqReloadPage() { window.location.reload(); }');
+        return array(
+            'recordsTotal' => $result['count'],
+            'recordsFiltered' => $result['count'],
+            'data' => $data
+        );
+    }
 
-        $this->assignSmartyVariable('headers', $headers);
-        $this->assignSmartyVariable('rows', $rows);
-        $this->assignSmartyVariable('messageNoData', $gL10n->get('SYS_NO_ENTRIES'));
-        $this->addHtmlByTemplate('requirements.activities.list.tpl');
+    /**
+     * The filter bar and the narrowing the page was opened with, as findActivityRows() takes them.
+     *
+     * @param array<string,string> $filters
+     * @param array<string,mixed> $resolved what resolveListFilter() made of the narrowing
+     * @return array<string,mixed>
+     * @throws Exception
+     */
+    private function serviceFilter(array $filters, array $resolved): array
+    {
+        global $gDb;
+
+        $providerId = null;
+        if ($filters['provider'] !== '') {
+            foreach ((new ProviderService($gDb))->findVisible() as $provider) {
+                if ($provider['rqp_uuid'] === $filters['provider']) {
+                    $providerId = (int) $provider['rqp_id'];
+                    break;
+                }
+            }
+            // An unknown provider finds nothing, rather than quietly dropping the filter.
+            $providerId ??= 0;
+        }
+
+        return array(
+            'userId' => $resolved['userId'],
+            'query' => $filters['query'],
+            'requirementTypeId' => $resolved['type'] === null ? null : (int) $resolved['type']['rqt_id'],
+            'periodRange' => $resolved['periodRange'],
+            'providerId' => $providerId,
+            'dateFrom' => $filters['from'],
+            'dateTo' => $filters['to']
+        );
+    }
+
+    /**
+     * Send the activities the list shows for these filters as an Excel file in the importer's
+     * layout, or - with $withCertificates - as a ZIP of that file and the certificates, which the
+     * import wizard takes back as it is. See ActivityExportService.
+     *
+     * @param array<string,string> $filters as for listData()
+     * @throws Exception|\PhpOffice\PhpSpreadsheet\Writer\Exception
+     */
+    public function export(array $filters, bool $withCertificates = false): void
+    {
+        global $gDb;
+
+        $resolved = $this->resolveListFilter(
+            $filters['requirement'],
+            $filters['period'],
+            $filters['user'],
+            $filters['periodTo'] ?? ''
+        );
+        $filter = $this->serviceFilter($filters, $resolved);
+        $service = new ActivityExportService($gDb);
+        $filename = 'requirements-activities-' . date('Y-m-d');
+
+        if (!$withCertificates) {
+            $spreadsheet = $service->spreadsheet($filter);
+            header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+            header('Content-Disposition: attachment; filename="' . $filename . '.xlsx"');
+            header('Cache-Control: private, must-revalidate');
+            (new Xlsx($spreadsheet))->save('php://output');
+            return;
+        }
+
+        if (!ActivityFileService::isEnabled()) {
+            throw new Exception('PLG_REQUIREMENTS_FILES_DISABLED');
+        }
+        $zipPath = tempnam(sys_get_temp_dir(), 'reqexport');
+        try {
+            $service->archive($filter, $zipPath);
+            header('Content-Type: application/zip');
+            header('Content-Disposition: attachment; filename="' . $filename . '.zip"');
+            header('Content-Length: ' . filesize($zipPath));
+            header('Cache-Control: private, must-revalidate');
+            readfile($zipPath);
+        } finally {
+            @unlink($zipPath);
+        }
+    }
+
+    /**
+     * The certificates of an activity as one paperclip per file, each a download link named by its
+     * tooltip, so the column stays narrow however long the file names are.
+     *
+     * @param array<int,array<string,mixed>> $files
+     */
+    private function filesCell(array $files): string
+    {
+        $html = '';
+        foreach ($files as $file) {
+            $html .= '<a class="admidio-icon-link" href="' . $this->pageUrl('file.php', array('uuid' => $file['raf_uuid']))
+                . '"><i class="bi bi-paperclip" data-bs-toggle="tooltip" title="'
+                . SecurityUtils::encodeHTML((string) $file['raf_name']) . '"></i></a>';
+        }
+        return $html;
+    }
+
+    /**
+     * Claimed and accepted credits in one cell. Where a reviewer accepted a different amount, the
+     * claim is struck through and the accepted amount stands beside it; otherwise one number says
+     * it all, and an unreviewed claim is simply the claim.
+     */
+    private static function creditsCell(mixed $claimed, mixed $accepted): string
+    {
+        $claimedText = self::formatCredits($claimed);
+        $acceptedText = self::formatCredits($accepted);
+        if ($acceptedText === '' || $acceptedText === $claimedText) {
+            return $claimedText;
+        }
+        return '<del class="text-body-secondary">' . $claimedText . '</del> ' . $acceptedText;
+    }
+
+    /**
+     * The heading of the group a row belongs to, as HTML. A period only names one together with its
+     * requirement once the list shows several requirements.
+     */
+    private function groupLabel(array $row, string $groupBy, string $granularity, bool $allRequirements, string $notSet): string
+    {
+        $label = match ($groupBy) {
+            'period' => self::periodText($row) === '' ? '' : self::periodText($row)
+                . ($allRequirements ? ' · ' . self::requirementName($row) : ''),
+            'requirement' => self::requirementName($row),
+            'provider' => self::providerName($row),
+            'begin' => self::dateGroupLabel($row['rqa_begin_date'], $granularity),
+            'end' => self::dateGroupLabel($row['rqa_end_date'] ?? $row['rqa_begin_date'], $granularity),
+            'certificate' => self::dateGroupLabel($row['rqa_certificate_date'], $granularity),
+            default => ''
+        };
+        return $label === '' ? $notSet : SecurityUtils::encodeHTML($label);
+    }
+
+    /**
+     * The credits of a whole group, shown in the Credits column of its heading and in the same form
+     * as that column. A group of several requirements is totalled per requirement, because hours of
+     * one requirement and points of another add up to nothing anybody could read.
+     *
+     * @param array<string,array{claimed:float,credited:float}> $totals by requirement
+     */
+    private static function groupTotal(array $totals): string
+    {
+        if ($totals === array()) {
+            return '';
+        }
+
+        $parts = array();
+        foreach ($totals as $requirement => $total) {
+            $cell = self::creditsCell($total['claimed'], $total['credited']);
+            $parts[] = count($totals) > 1 ? SecurityUtils::encodeHTML($requirement) . ': ' . $cell : $cell;
+        }
+        return implode(' &middot; ', $parts);
+    }
+
+    /**
+     * The credited period of a row as its control shows it: "2026", "2026 Q2", "2026-03", ...
+     */
+    private static function periodText(array $row): string
+    {
+        if ($row['rac_period_reference'] === null) {
+            return '';
+        }
+        $kind = FulfilmentService::periodControlKindFor((string) $row['rqt_period_anchor'], (string) $row['rqt_period_unit']);
+        $parts = FulfilmentService::periodControlValue($kind, (string) $row['rac_period_reference']);
+        return $parts['quarter'] !== '' ? $parts['value'] . ' Q' . $parts['quarter'] : $parts['value'];
+    }
+
+    /** The requirement of a row by its short name, or its name where it has none. */
+    private static function requirementName(array $row): string
+    {
+        $name = (string) ($row['rqt_short_name'] ?? '');
+        return $name !== '' ? $name : (string) ($row['rqt_name'] ?? '');
+    }
+
+    /** The provider of a row by its short name, or its name where it has none. */
+    private static function providerName(array $row): string
+    {
+        $name = (string) ($row['rqa_provider_short_name'] ?? '');
+        return $name !== '' ? $name : (string) ($row['rqa_provider_name'] ?? '');
+    }
+
+    /**
+     * The year, quarter or month a date falls in, as the heading of a date group.
+     */
+    private static function dateGroupLabel(?string $ymd, string $granularity): string
+    {
+        if ($ymd === null || $ymd === '') {
+            return '';
+        }
+        $date = \DateTimeImmutable::createFromFormat('!Y-m-d', substr($ymd, 0, 10));
+        return match ($granularity) {
+            'quarter' => $date->format('Y') . ' Q' . (intdiv((int) $date->format('n') - 1, 3) + 1),
+            'month' => $date->format('Y-m'),
+            default => $date->format('Y')
+        };
+    }
+
+    /**
+     * The row actions as icon links, the markup sys-template-parts/list.functions.tpl gives a row
+     * on a wide screen. The table rows are built here rather than by Smarty, because they arrive
+     * as JSON.
+     */
+    private static function actionsHtml(array $actions): string
+    {
+        $html = '';
+        foreach ($actions as $action) {
+            $icon = '<i class="' . $action['icon'] . '" data-bs-toggle="tooltip" title="'
+                . SecurityUtils::encodeHTML($action['tooltip']) . '"></i>';
+            if (isset($action['dataHref'])) {
+                $html .= '<a class="admidio-icon-link admidio-messagebox" href="javascript:void(0);" data-buttons="yes-no"'
+                    . ' data-message="' . SecurityUtils::encodeHTML($action['dataMessage']) . '"'
+                    . ' data-href="' . SecurityUtils::encodeHTML($action['dataHref']) . '">' . $icon . '</a>';
+            } else {
+                $html .= '<a class="admidio-icon-link" href="' . $action['url'] . '">' . $icon . '</a>';
+            }
+        }
+        return $html;
     }
 
     /**
@@ -445,7 +1064,7 @@ class ActivityPresenter extends RequirementsPresenter
 
         $creditFields = array();
         $optionalCreditTypes = array();
-        foreach ($this->creditableTypes($existingCredits) as $type) {
+        foreach ($this->creditableTypes($existingCredits, $targetUserId) as $type) {
             $typeId = (int) $type['rqt_id'];
             $current = $existingCredits[$typeId] ?? null;
             $shown = $current !== null || isset($applicable[$typeId]);
@@ -485,6 +1104,7 @@ class ActivityPresenter extends RequirementsPresenter
                 'typeId' => $typeId,
                 'name' => SecurityUtils::encodeHTML((string) $type['rqt_name']),
                 'shown' => $shown,
+                'isNew' => $current === null,
                 'kind' => $kind,
                 'maxYear' => $maxYear,
                 'periodId' => $periodField,
@@ -505,8 +1125,12 @@ class ActivityPresenter extends RequirementsPresenter
         }
         $this->assignSmartyVariable('optionalCreditTypes', $optionalCreditTypes);
 
-        // Prefill an empty credited period from the begin date, and reveal a hidden requirement row
-        // when it is picked from the selector.
+        // The credited period follows the dates of the activity until the member sets it: a period
+        // that was empty when the form opened, or that only this script has filled, moves with the
+        // date last entered. A date input reports every keystroke of its year as a change - "0002",
+        // "0020", "0202" - so a year before 1900 is a date still being typed, not one to follow.
+        // A requirement row added from the selector starts with that period and with the attendance
+        // hours as its claim, which is what most activities count with.
         $this->addJavascript('
             function admReqIsoWeek(d) {
                 var t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
@@ -515,28 +1139,53 @@ class ActivityPresenter extends RequirementsPresenter
                 var w = Math.ceil((((t - Date.UTC(y, 0, 1)) / 86400000) + 1) / 7);
                 return y + "-W" + ("0" + w).slice(-2);
             }
-            $("#rqa_begin").on("change.reqcredit", function () {
-                var v = $(this).val();
-                if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) { return; }
+            function admReqUsableDate(v) {
+                return /^\d{4}-\d{2}-\d{2}$/.test(v) && parseInt(v.substring(0, 4), 10) >= 1900;
+            }
+            var admReqPeriodDate = "";
+            function admReqActivityDate() {
+                if (admReqPeriodDate !== "") { return admReqPeriodDate; }
+                var v = $("#rqa_begin").val();
+                return admReqUsableDate(v) ? v : "";
+            }
+            function admReqFillPeriod(field, v) {
                 var jd = new Date(v + "T00:00:00");
-                $(".adm-req-period[data-kind]").each(function () {
-                    if ($(this).val() !== "") { return; }
-                    var k = $(this).attr("data-kind");
-                    if (k === "month") { $(this).val(v.substring(0, 7)); }
-                    else if (k === "week") { $(this).val(admReqIsoWeek(jd)); }
-                    else if (k === "year") { $(this).val(v.substring(0, 4)); }
-                    else if (k === "quarter") {
-                        $(this).val(v.substring(0, 4));
-                        $(this).closest(".input-group").find(".adm-req-period-quarter")
-                            .val(String(Math.floor(jd.getMonth() / 3) + 1));
-                    }
-                    else { $(this).val(v); }
-                });
+                var k = field.attr("data-kind");
+                if (k === "month") { field.val(v.substring(0, 7)); }
+                else if (k === "week") { field.val(admReqIsoWeek(jd)); }
+                else if (k === "year") { field.val(v.substring(0, 4)); }
+                else if (k === "quarter") {
+                    field.val(v.substring(0, 4));
+                    field.closest(".input-group").find(".adm-req-period-quarter")
+                        .val(String(Math.floor(jd.getMonth() / 3) + 1));
+                }
+                else { field.val(v); }
+            }
+            $(".adm-req-period[data-kind]").each(function () {
+                if ($(this).val() === "" || $(this).closest("tr").is("[data-new]")) { $(this).attr("data-auto", "1"); }
+            });
+            $(".adm-req-period, .adm-req-period-quarter").on("input change", function () {
+                $(this).closest("tr").find(".adm-req-period").removeAttr("data-auto");
+            });
+            $("#rqa_begin, #rqa_end, #rqa_certificate_date").on("change.reqcredit", function () {
+                var v = $(this).val();
+                if (!admReqUsableDate(v)) { return; }
+                admReqPeriodDate = v;
+                $(".adm-req-period[data-auto]").each(function () { admReqFillPeriod($(this), v); });
             });
             $("#adm_req_add_credit").on("change", function () {
                 var id = $(this).val();
                 if (id === "") { return; }
-                $("#adm_req_credit_" + id).prop("hidden", false);
+                var row = $("#adm_req_credit_" + id).prop("hidden", false);
+                var period = row.find(".adm-req-period");
+                var v = admReqActivityDate();
+                if (v !== "" && (period.val() === "" || period.is("[data-auto]"))) {
+                    admReqFillPeriod(period, v);
+                }
+                var claimed = $("#credit_" + id);
+                if (claimed.val() === "" && $("#rqa_attendance").val() !== "") {
+                    claimed.val($("#rqa_attendance").val());
+                }
                 $(this).find("option[value=\'" + id + "\']").remove();
                 $(this).val("");
                 if ($(this).find("option").length <= 1) { $("#adm_req_add_credit_wrap").hide(); }

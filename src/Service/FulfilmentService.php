@@ -4,6 +4,7 @@ namespace AdmidioPlugin\Requirements\Service;
 use Admidio\Components\Entity\Component;
 use Admidio\Infrastructure\Database;
 use Admidio\Infrastructure\Exception;
+use Admidio\Infrastructure\Language;
 use Admidio\Users\Entity\User;
 use AdmidioPlugin\Requirements\Database\RequirementsTables;
 use AdmidioPlugin\Requirements\RequirementsPlugin;
@@ -46,8 +47,9 @@ final class FulfilmentService
             'SELECT *
                FROM ' . RequirementsTables::requirementTypes() . '
               WHERE rqt_org_id = ?
-              ORDER BY rqt_sequence, rqt_name',
-            array((int)$gCurrentOrgId)
+                AND (rqt_usr_id IS NULL OR rqt_usr_id = ?)
+              ORDER BY CASE WHEN rqt_usr_id IS NULL THEN 0 ELSE 1 END, rqt_sequence, rqt_name',
+            array((int)$gCurrentOrgId, $userId)
         );
 
         $result = array();
@@ -64,12 +66,7 @@ final class FulfilmentService
             }
 
             [$periodStart, $periodEnd, $label] = self::periodFor($type, $reference);
-            $rules = $this->loadRules($type, $periodStart, $periodEnd);
-            $roleIds = array_values(array_unique(array_map(
-                static fn(array $rule): int => (int)$rule['rrr_role_id'],
-                $rules
-            )));
-            $memberships = $this->loadMemberships($userId, $roleIds, $periodStart, $periodEnd);
+            [$rules, $memberships] = $this->obligationInputs($type, $userId, $periodStart, $periodEnd);
 
             [$required, $warnings, $hasRule] = $this->calculateRequired(
                 $type,
@@ -226,32 +223,40 @@ final class FulfilmentService
      *
      * @param array<int,array<string,mixed>> $credits contributions that count, ordered by their
      *        credited-period date, each with `periodReference` and `effectiveCredits`
-     * @return array{0:array<int,string>,1:float} the renewal dates in order, and how much has been
-     *         accumulated towards the next one
+     * @return array{0:array<int,string>,1:float,2:array<int,array{from:string,renewal:string,attained:float}>}
+     *         the renewal dates in order, how much has been accumulated towards the next one, and
+     *         each completed cycle with the credited period of its first contribution and its total
      */
     public static function renewalCycles(array $credits, float $target): array
     {
         $renewals = array();
+        $cycles = array();
         $running = 0.0;
+        $from = null;
 
         foreach ($credits as $credit) {
             $effective = (float) $credit['effectiveCredits'];
+            $date = (string) $credit['periodReference'];
 
             if ($target <= 0.0) {
                 if ($effective > 0.0) {
-                    $renewals[] = (string) $credit['periodReference'];
+                    $renewals[] = $date;
+                    $cycles[] = array('from' => $date, 'renewal' => $date, 'attained' => $effective);
                 }
                 continue;
             }
 
+            $from ??= $date;
             $running += $effective;
             if ($running >= $target) {
-                $renewals[] = (string) $credit['periodReference'];
+                $renewals[] = $date;
+                $cycles[] = array('from' => $from, 'renewal' => $date, 'attained' => $running);
                 $running = 0.0;
+                $from = null;
             }
         }
 
-        return array($renewals, $running);
+        return array($renewals, $running, $cycles);
     }
 
     /**
@@ -266,12 +271,7 @@ final class FulfilmentService
      */
     private function recurringTarget(RequirementType $type, int $userId, DateTimeImmutable $reference): array
     {
-        $rules = $this->loadRules($type, $reference, $reference);
-        $roleIds = array_values(array_unique(array_map(
-            static fn(array $rule): int => (int) $rule['rrr_role_id'],
-            $rules
-        )));
-        $memberships = $this->loadMemberships($userId, $roleIds, $reference, $reference);
+        [$rules, $memberships] = $this->obligationInputs($type, $userId, $reference, $reference);
 
         // `full` for every row: see above.
         foreach ($rules as $index => $rule) {
@@ -330,10 +330,14 @@ final class FulfilmentService
      * The period unit follows the requirement, so a yearly requirement yields years and a quarterly
      * one quarters. Requirements without a role rule for this member are not shown at all.
      *
-     * @return array<int,array{typeId:int,requirement:string,shortName:string,periods:array<int,array<string,mixed>>}>
+     * $offset pages back through the history: each step moves every requirement back by the number
+     * of periods shown, in its own unit. `hasEarlier` says whether a further step would find
+     * anything - a contribution before the first period shown, or an earlier cycle.
+     *
+     * @return array<int,array{typeId:int,requirement:string,shortName:string,own:bool,hasEarlier:bool,periods:array<int,array<string,mixed>>}>
      * @throws Exception
      */
-    public function coverageHistoryForUser(int $userId, int $previousPeriods = 4): array
+    public function coverageHistoryForUser(int $userId, int $previousPeriods = 4, int $offset = 0): array
     {
         global $gCurrentOrgId, $gCurrentUser, $gValidLogin;
 
@@ -346,6 +350,7 @@ final class FulfilmentService
         }
 
         $previousPeriods = max(0, min(20, $previousPeriods));
+        $offset = max(0, $offset);
         $applicable = $this->applicableRequirementTypeIds($userId);
         if ($applicable === array()) {
             return array();
@@ -354,8 +359,9 @@ final class FulfilmentService
         $rows = $this->db->getArrayFromSql(
             'SELECT * FROM ' . RequirementsTables::requirementTypes() . '
               WHERE rqt_org_id = ?
-              ORDER BY rqt_sequence, rqt_name',
-            array((int) $gCurrentOrgId)
+                AND (rqt_usr_id IS NULL OR rqt_usr_id = ?)
+              ORDER BY CASE WHEN rqt_usr_id IS NULL THEN 0 ELSE 1 END, rqt_sequence, rqt_name',
+            array((int) $gCurrentOrgId, $userId)
         );
 
         $today = self::date(DATE_NOW);
@@ -370,25 +376,21 @@ final class FulfilmentService
                 continue;
             }
 
-            // A requirement that recurs from its last fulfilment has no periods to lay side by
-            // side. It gets one bar: how far the running cycle has come, labelled with its due date.
+            // A requirement that recurs from its last fulfilment has no calendar periods. Its
+            // periods are the cycles it was renewed in, each valid from its renewal for one
+            // interval, and paging moves back through them.
             if ((string) $type->getValue('rqt_period_anchor') !== 'calendar') {
-                $recurring = $this->lastFulfilmentCoverage($type, $userId, $today);
-                if ($recurring !== null) {
+                $cycles = $this->recurringHistory($type, $userId, $today);
+                if ($cycles !== null) {
+                    $size = $previousPeriods + 1;
+                    $end = count($cycles) - $offset * $size;
                     $result[] = array(
                         'typeId' => $typeId,
-                        'requirement' => $recurring['requirement'],
-                        'shortName' => $recurring['shortName'],
-                        'periods' => array(array(
-                            'label' => $recurring['nextDue'] ?? $recurring['period'],
-                            'periodReference' => $recurring['periodReference'],
-                            'attained' => $recurring['attained'],
-                            'pending' => $recurring['pending'],
-                            'required' => $recurring['required'],
-                            'percent' => $recurring['coverage'] === null ? null : (int) round($recurring['coverage']),
-                            'status' => $recurring['status'],
-                            'warnings' => $recurring['warnings']
-                        ))
+                        'requirement' => (string) $type->getValue('rqt_name'),
+                        'shortName' => (string) $type->getValue('rqt_short_name'),
+                        'own' => RequirementTypeService::ownerOf($type) !== null,
+                        'hasEarlier' => $end > $size,
+                        'periods' => $end <= 0 ? array() : array_slice($cycles, max(0, $end - $size), min($size, $end))
                     );
                 }
                 continue;
@@ -408,21 +410,117 @@ final class FulfilmentService
 
             $periods = array();
             for ($i = $previousPeriods; $i >= 0; --$i) {
-                $reference = $i === 0
+                $steps = $i + $offset * ($previousPeriods + 1);
+                $reference = $steps === 0
                     ? $anchor
-                    : $anchor->modify('-' . ($i * $stepSize) . ' ' . $stepUnit);
+                    : $anchor->modify('-' . ($steps * $stepSize) . ' ' . $stepUnit);
                 $periods[] = $this->periodCoverage($type, $userId, $reference);
             }
 
+            // Earlier periods are worth visiting while the member owed something in them or booked
+            // something to them - an obligation since 2015 that nothing was ever entered for is
+            // exactly what a member scrolling back wants to see.
+            $credits = $this->loadAllCredits($userId, $typeId);
+            $earliest = array_filter(array(
+                $credits === array() ? null : $credits[0]['periodReference'],
+                $this->obligationStart($type, $userId)
+            ));
             $result[] = array(
                 'typeId' => $typeId,
                 'requirement' => (string) $type->getValue('rqt_name'),
                 'shortName' => (string) $type->getValue('rqt_short_name'),
+                'own' => RequirementTypeService::ownerOf($type) !== null,
+                'hasEarlier' => $earliest !== array() && min($earliest) < $periods[0]['periodReference'],
                 'periods' => $periods
             );
         }
 
         return $result;
+    }
+
+    /**
+     * The overview periods of a requirement that recurs from its last fulfilment, oldest first.
+     *
+     * Every completed cycle is shown as the window it made the requirement valid for - from the
+     * renewal for one interval - since that is what a member wants to know: a course on 27.10.2025
+     * covers 27.10.2025 to 26.10.2028. The cycle under way follows as one more period, but only when
+     * there is something to say about it: credits already collected towards it, or the requirement
+     * being overdue or never fulfilled. Otherwise a fulfilled requirement would always end in an
+     * empty 0/1 bar for the next cycle.
+     *
+     * The links of a period select the contributions that made it up, from `periodReference` to
+     * `periodTo`; an open `periodTo` means every contribution from `periodReference` on.
+     *
+     * @return array<int,array<string,mixed>>|null null when the requirement does not apply to this
+     *         member and carries no credits of theirs either
+     * @throws Exception
+     */
+    private function recurringHistory(RequirementType $type, int $userId, DateTimeImmutable $today): ?array
+    {
+        global $gL10n, $gSettingsManager;
+
+        [$target, $warnings, $hasRule] = $this->recurringTarget($type, $userId, $today);
+        $credits = $this->loadAllCredits($userId, (int) $type->getValue('rqt_id'));
+        if (!$hasRule && $credits === array()) {
+            return null;
+        }
+
+        $counting = array_values(array_filter($credits, static fn(array $c): bool => $c['counts']));
+        $pending = array_sum(array_column(
+            array_filter($credits, static fn(array $c): bool => !$c['counts']),
+            'effectiveCredits'
+        ));
+        [, $running, $cycles] = self::renewalCycles($counting, $target);
+
+        $format = $gSettingsManager->getString('system_date');
+        $interval = self::renewalInterval($type);
+        $required = $target > 0.0 ? round($target, 2) : null;
+
+        $periods = array();
+        foreach ($cycles as $cycle) {
+            $validFrom = self::date($cycle['renewal']);
+            $periods[] = array(
+                'label' => $validFrom->format($format) . ' – '
+                    . $validFrom->add($interval)->modify('-1 day')->format($format),
+                'periodReference' => $cycle['from'],
+                'periodTo' => $cycle['renewal'],
+                'attained' => round($cycle['attained'], 2),
+                'pending' => 0.0,
+                'required' => $required,
+                'percent' => 100,
+                'status' => 'fulfilled',
+                'warnings' => array()
+            );
+        }
+
+        $lastRenewal = $cycles === array() ? null : end($cycles)['renewal'];
+        $nextDue = $lastRenewal === null ? null : self::date($lastRenewal)->add($interval);
+        $overdue = $nextDue !== null && $nextDue <= $today;
+
+        if ($lastRenewal === null || $overdue || $running > 0.0 || $pending > 0.0) {
+            if ($lastRenewal === null) {
+                $status = $hasRule ? 'never-fulfilled' : 'additional-credits';
+            } else {
+                $status = $overdue ? 'overdue' : 'in-progress';
+            }
+            $periods[] = array(
+                'label' => $nextDue === null
+                    ? self::renewalLabel($type)
+                    : $gL10n->get('PLG_REQUIREMENTS_NEXT_DUE') . ' ' . $nextDue->format($format),
+                'periodReference' => $lastRenewal === null
+                    ? ($credits === array() ? null : $credits[0]['periodReference'])
+                    : self::date($lastRenewal)->modify('+1 day')->format('Y-m-d'),
+                'periodTo' => '',
+                'attained' => round($running, 2),
+                'pending' => round((float) $pending, 2),
+                'required' => $required,
+                'percent' => $required === null ? null : (int) round(min(100.0, ($running / $target) * 100.0)),
+                'status' => $status,
+                'warnings' => $warnings
+            );
+        }
+
+        return $periods;
     }
 
     /**
@@ -435,12 +533,7 @@ final class FulfilmentService
     {
         [$periodStart, $periodEnd, $label] = self::periodFor($type, $reference);
 
-        $rules = $this->loadRules($type, $periodStart, $periodEnd);
-        $roleIds = array_values(array_unique(array_map(
-            static fn(array $rule): int => (int) $rule['rrr_role_id'],
-            $rules
-        )));
-        $memberships = $this->loadMemberships($userId, $roleIds, $periodStart, $periodEnd);
+        [$rules, $memberships] = $this->obligationInputs($type, $userId, $periodStart, $periodEnd);
 
         [$required, $warnings, $hasRule] = $this->calculateRequired(
             $type,
@@ -501,9 +594,10 @@ final class FulfilmentService
 
         // OrganizationScope answers a requirement of another organization with an empty record, so
         // a foreign id reads the same way an unknown one does.
+        // A member's own requirement is nobody else's business, so it is not reviewed either.
         $type = new RequirementType($this->db, $requirementTypeId);
         $typeId = (int) $type->getValue('rqt_id');
-        if ($typeId === 0) {
+        if ($typeId === 0 || RequirementTypeService::ownerOf($type) !== null) {
             throw new Exception('SYS_NO_RIGHTS');
         }
 
@@ -739,7 +833,20 @@ final class FulfilmentService
             array($userId, DATE_NOW, DATE_NOW, (int) $gCurrentOrgId)
         )->fetchAll(\PDO::FETCH_COLUMN);
 
-        return array_map('intval', $rows);
+        // A member's own requirements apply to them while their rule is valid.
+        $own = $this->db->queryPrepared(
+            'SELECT DISTINCT rqt.rqt_id
+               FROM ' . RequirementsTables::requirementTypes() . ' AS rqt
+         INNER JOIN ' . RequirementsTables::requirementRoleRules() . ' AS rrr
+                 ON rrr.rrr_requirement_type_id = rqt.rqt_id
+              WHERE rqt.rqt_org_id = ?
+                AND rqt.rqt_usr_id = ?
+                AND (rrr.rrr_valid_from IS NULL OR rrr.rrr_valid_from <= ?)
+                AND (rrr.rrr_valid_until IS NULL OR rrr.rrr_valid_until >= ?)',
+            array((int) $gCurrentOrgId, $userId, DATE_NOW, DATE_NOW)
+        )->fetchAll(\PDO::FETCH_COLUMN);
+
+        return array_values(array_unique(array_map('intval', array_merge($rows, $own))));
     }
 
     /**
@@ -965,6 +1072,65 @@ final class FulfilmentService
     }
 
     /**
+     * The rules of a requirement that touch a period and the member's memberships of their roles in
+     * it - everything calculateRequiredCredits() needs to know about this member.
+     *
+     * A rule without a role is the target of a member's own requirement and applies to its owner
+     * for as long as the rule is valid, which is expressed as a membership of the pseudo role 0
+     * without end: the rule's validity is what bounds it, and pro-rating it works as for a role.
+     *
+     * @return array{0:array<int,array<string,mixed>>,1:array<int,array<int,array{start:string,end:string}>>}
+     * @throws Exception
+     */
+    private function obligationInputs(
+        RequirementType $type,
+        int $userId,
+        DateTimeImmutable $start,
+        DateTimeImmutable $end
+    ): array {
+        $rules = $this->loadRules($type, $start, $end);
+        $roleIds = array_values(array_unique(array_map(
+            static fn(array $rule): int => (int) $rule['rrr_role_id'],
+            $rules
+        )));
+        $memberships = $this->loadMemberships($userId, array_values(array_diff($roleIds, array(0))), $start, $end);
+        if (in_array(0, $roleIds, true) && RequirementTypeService::ownerOf($type) === $userId) {
+            $memberships[0] = array(array('start' => '0001-01-01', 'end' => '9999-12-31'));
+        }
+
+        return array($rules, $memberships);
+    }
+
+    /**
+     * The first day the member owed anything for a requirement: the earliest day on which one of
+     * their memberships overlaps a rule for that role. Null when they never did.
+     *
+     * @throws Exception
+     */
+    private function obligationStart(RequirementType $type, int $userId): ?string
+    {
+        [$rules, $memberships] = $this->obligationInputs(
+            $type,
+            $userId,
+            self::date('0001-01-01'),
+            self::date('9999-12-31')
+        );
+
+        $earliest = null;
+        foreach ($rules as $rule) {
+            foreach ($memberships[(int) $rule['rrr_role_id']] ?? array() as $membership) {
+                $from = max($membership['start'], (string) ($rule['rrr_valid_from'] ?? '') ?: $membership['start']);
+                $until = min($membership['end'], (string) ($rule['rrr_valid_until'] ?? '') ?: $membership['end']);
+                if ($from <= $until && ($earliest === null || $from < $earliest)) {
+                    $earliest = $from;
+                }
+            }
+        }
+
+        return $earliest;
+    }
+
+    /**
      * @return array<int,array<string,mixed>>
      */
     private function loadRules(RequirementType $type, DateTimeImmutable $start, DateTimeImmutable $end): array
@@ -974,12 +1140,12 @@ final class FulfilmentService
         $statement = $this->db->queryPrepared(
             'SELECT rrr.*, rol.rol_name
                FROM ' . RequirementsTables::requirementRoleRules() . ' AS rrr
-         INNER JOIN ' . TBL_ROLES . ' AS rol
+          LEFT JOIN ' . TBL_ROLES . ' AS rol
                  ON rol.rol_id = rrr.rrr_role_id
-         INNER JOIN ' . TBL_CATEGORIES . ' AS cat
+          LEFT JOIN ' . TBL_CATEGORIES . ' AS cat
                  ON cat.cat_id = rol.rol_cat_id
               WHERE rrr.rrr_requirement_type_id = ?
-                AND cat.cat_org_id = ?
+                AND (rrr.rrr_role_id IS NULL OR cat.cat_org_id = ?)
                 AND (rrr.rrr_valid_from IS NULL OR rrr.rrr_valid_from <= ?)
                 AND (rrr.rrr_valid_until IS NULL OR rrr.rrr_valid_until >= ?)
               ORDER BY rrr.rrr_role_id, rrr.rrr_valid_from, rrr.rrr_id',
@@ -1152,7 +1318,7 @@ final class FulfilmentService
                 continue;
             }
 
-            $roleName = (string)($roleRules[0]['rol_name'] ?? $roleId);
+            $roleName = Language::translateIfTranslationStrId((string)($roleRules[0]['rol_name'] ?? $roleId));
             if (count($fullValues) > 1) {
                 $warnings[] = $gL10n->get('PLG_REQUIREMENTS_WARNING_SEVERAL_FULL_RULES', array($roleName));
             }

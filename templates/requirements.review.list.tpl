@@ -19,7 +19,7 @@
     {else}
         {if $hasContributions}
             <div class="mb-2">
-                <button type="button" class="btn btn-sm btn-outline-secondary" id="adm_req_toggle_all" data-open="0"
+                <button type="button" class="btn btn-sm btn-secondary" id="adm_req_toggle_all" data-open="0"
                         data-label-expand="{$l10n->get('PLG_REQUIREMENTS_REVIEW_EXPAND_ALL')}"
                         data-label-collapse="{$l10n->get('PLG_REQUIREMENTS_REVIEW_COLLAPSE_ALL')}">
                     <i class="bi bi-arrows-expand"></i>

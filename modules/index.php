@@ -5,12 +5,21 @@
  * activity edit form.
  *
  * Parameters:
- * mode        : list (default) | edit | save | submit | delete
+ * mode        : list (default) | data | export | edit | save | submit | delete
  * uuid        : UUID of the activity for edit / save / delete
  * query       : free-text filter for the activity list
  * requirement : UUID of the requirement type whose credits the list shows
  * period      : credited period the list is narrowed to, for one bar of the overview
+ * period_to   : last credited period of a renewal cycle, for a bar of a recurring requirement
+ * overview    : how many pages the fulfilment overview is moved back into the past
  * user        : UUID of the member the list is narrowed to; administrators only
+ *
+ * mode=data is the server-side DataTables endpoint of the activity table. Besides the DataTables
+ * parameters (draw, start, length, order, columns) it takes the filter bar: provider (UUID), from,
+ * to (dates), group (period | requirement | provider | begin | end | certificate) and granularity
+ * (year | quarter | month) for the date groups. mode=export takes the same filters and sends the
+ * list as an Excel file in the importer's layout, with certificates=1 as a ZIP of that file and the
+ * certificates, which the import wizard reads back.
  *
  * @copyright Reinhold Kainhofer
  * @see https://www.admidio.org/
@@ -35,7 +44,7 @@ try {
 
     $getMode = admFuncVariableIsValid($_GET, 'mode', 'string', array(
         'defaultValue' => 'list',
-        'validValues' => array('list', 'edit', 'save', 'submit', 'delete', 'file-delete')
+        'validValues' => array('list', 'data', 'export', 'edit', 'save', 'submit', 'delete', 'file-delete')
     ));
     // No defaultValue here: admFuncVariableIsValid() only returns early for a missing parameter
     // when none is set, otherwise it would validate the empty string against the datatype.
@@ -43,15 +52,70 @@ try {
     $getQuery = admFuncVariableIsValid($_GET, 'query', 'string');
     $getRequirement = admFuncVariableIsValid($_GET, 'requirement', 'uuid');
     $getPeriod = admFuncVariableIsValid($_GET, 'period', 'date');
+    $getPeriodTo = admFuncVariableIsValid($_GET, 'period_to', 'date');
     $getUser = admFuncVariableIsValid($_GET, 'user', 'uuid');
     $getFile = admFuncVariableIsValid($_GET, 'file', 'uuid');
 
     switch ($getMode) {
         case 'list':
             $page = new ActivityPresenter();
-            $page->createList($getQuery, $getRequirement, $getPeriod, $getUser);
+            $page->createList(
+                $getQuery,
+                $getRequirement,
+                $getPeriod,
+                $getUser,
+                $getPeriodTo,
+                admFuncVariableIsValid($_GET, 'overview', 'int')
+            );
             $gNavigation->addStartUrl(CURRENT_URL, $page->getHeadline(), 'bi-clipboard-check');
             $page->show();
+            break;
+
+        case 'data':
+        case 'export':
+            $filters = array(
+                'requirement' => $getRequirement,
+                'period' => $getPeriod,
+                'periodTo' => $getPeriodTo,
+                'user' => $getUser,
+                'query' => $getQuery,
+                'provider' => admFuncVariableIsValid($_GET, 'provider', 'uuid'),
+                'from' => admFuncVariableIsValid($_GET, 'from', 'date'),
+                'to' => admFuncVariableIsValid($_GET, 'to', 'date'),
+                'group' => admFuncVariableIsValid($_GET, 'group', 'string', array(
+                    'validValues' => array('', 'period', 'requirement', 'provider', 'begin', 'end', 'certificate')
+                )),
+                'granularity' => admFuncVariableIsValid($_GET, 'granularity', 'string', array(
+                    'defaultValue' => 'year',
+                    'validValues' => array('year', 'quarter', 'month')
+                ))
+            );
+            if ($getMode === 'export') {
+                (new ActivityPresenter())->export(
+                    $filters,
+                    admFuncVariableIsValid($_GET, 'certificates', 'bool')
+                );
+                break;
+            }
+
+            // The column a sort refers to is named by the table's own column list; the service only
+            // accepts the names it knows, so anything else in the request is ignored.
+            $order = array();
+            foreach ((array) ($_GET['order'] ?? array()) as $sort) {
+                $index = (int) ($sort['column'] ?? -1);
+                $order[] = array((string) ($_GET['columns'][$index]['data'] ?? ''), (string) ($sort['dir'] ?? 'asc'));
+            }
+
+            $page = new ActivityPresenter();
+            echo json_encode(array_merge(
+                array('draw' => admFuncVariableIsValid($_GET, 'draw', 'int', array('requireValue' => true))),
+                $page->listData(
+                    $filters,
+                    $order,
+                    admFuncVariableIsValid($_GET, 'start', 'int'),
+                    admFuncVariableIsValid($_GET, 'length', 'int', array('defaultValue' => 25))
+                )
+            ));
             break;
 
         case 'edit':
@@ -104,7 +168,9 @@ try {
             // Collect the per-requirement credit rows the form submitted. The service writes them
             // together with the activity in one transaction.
             $creditInput = array();
-            foreach ((new RequirementTypeService($gDb))->findTypes() as $typeRow) {
+            // The member's own requirements are those of the member the activity belongs to.
+            $ownerId = (int) $activity->getValue('rqa_user_id') ?: (int) $gCurrentUser->getValue('usr_id');
+            foreach ((new RequirementTypeService($gDb))->findTypes('', $ownerId) as $typeRow) {
                 $typeId = (int) $typeRow['rqt_id'];
                 if (!array_key_exists('credit_' . $typeId, $formValues)) {
                     continue;
@@ -127,9 +193,11 @@ try {
             // save above gave it one. A rejected file does not undo the activity - it is already
             // committed - so the refusal says so rather than pretending nothing happened.
             $fileError = '';
-            if (ActivityFileService::isEnabled() && isset($_FILES['adm_requirements_files'])) {
+            // The core file field posts as "userfile[]" whatever its id, like the attachments of
+            // the messages module.
+            if (ActivityFileService::isEnabled() && isset($_FILES['userfile'])) {
                 $fileService = new ActivityFileService($gDb);
-                foreach (ActivityFileService::uploadsFrom($_FILES['adm_requirements_files']) as $upload) {
+                foreach (ActivityFileService::uploadsFrom($_FILES['userfile']) as $upload) {
                     try {
                         $fileService->add($activity, $upload);
                     } catch (Throwable $fileException) {
@@ -190,5 +258,5 @@ try {
             break;
     }
 } catch (Throwable $e) {
-    handleException($e, in_array($getMode ?? '', array('save', 'submit', 'delete', 'file-delete')));
+    handleException($e, in_array($getMode ?? '', array('data', 'save', 'submit', 'delete', 'file-delete')));
 }

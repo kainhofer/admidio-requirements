@@ -4,6 +4,7 @@ namespace AdmidioPlugin\Requirements\Presenter;
 use Admidio\Changelog\Service\ChangelogService;
 use Admidio\Components\Entity\Component;
 use Admidio\Infrastructure\Exception;
+use Admidio\Infrastructure\Language;
 use Admidio\Infrastructure\Plugins\Plugin;
 use Admidio\Infrastructure\Plugins\PluginRegistry;
 use Admidio\Infrastructure\Utils\SecurityUtils;
@@ -113,5 +114,40 @@ abstract class RequirementsPresenter extends PagePresenter
             'icon' => $icon,
             'tooltip' => $tooltip
         );
+    }
+
+    protected static function periodUnitLabel(string $unit): string
+    {
+        return match ($unit) {
+            'quarter' => 'PLG_REQUIREMENTS_PERIOD_QUARTER',
+            'month' => 'PLG_REQUIREMENTS_PERIOD_MONTH',
+            'week' => 'PLG_REQUIREMENTS_PERIOD_WEEK',
+            default => 'PLG_REQUIREMENTS_PERIOD_YEAR'
+        };
+    }
+
+    /**
+     * Human-readable description of a requirement type's period, e.g. "Calendar year" or
+     * "Every 2 years after the last fulfilment".
+     *
+     * @param array<string,mixed> $type
+     */
+    protected static function periodDescription(array $type, Language $gL10n): string
+    {
+        $unit = (string) $type['rqt_period_unit'];
+        $count = max(1, (int) $type['rqt_period_count']);
+
+        if ((string) $type['rqt_period_anchor'] === 'calendar') {
+            return $gL10n->get(match ($unit) {
+                'quarter' => 'PLG_REQUIREMENTS_PERIOD_CALENDAR_QUARTER',
+                'month' => 'PLG_REQUIREMENTS_PERIOD_CALENDAR_MONTH',
+                'week' => 'PLG_REQUIREMENTS_PERIOD_CALENDAR_WEEK',
+                default => 'PLG_REQUIREMENTS_PERIOD_CALENDAR_YEAR'
+            });
+        }
+
+        return $gL10n->get('PLG_REQUIREMENTS_PERIOD_RECURRING', array(
+            $count . ' ' . $gL10n->get(self::periodUnitLabel($unit))
+        ));
     }
 }

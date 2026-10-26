@@ -4,7 +4,6 @@ namespace AdmidioPlugin\Requirements\Presenter;
 use Admidio\Infrastructure\Exception;
 use Admidio\Infrastructure\Utils\SecurityUtils;
 use Admidio\UI\Presenter\FormPresenter;
-use AdmidioPlugin\Requirements\Database\RequirementsTables;
 use AdmidioPlugin\Requirements\Entity\RequirementType;
 use AdmidioPlugin\Requirements\Service\FulfilmentService;
 use AdmidioPlugin\Requirements\Service\ActivityFileService;
@@ -315,9 +314,6 @@ class ReviewPresenter extends RequirementsPresenter
     /**
      * The certificate files of these activities, as download links keyed by activity id.
      *
-     * One query for the whole roster rather than one per contribution: a review page of two hundred
-     * members would otherwise open the file table two hundred times.
-     *
      * @param array<int,int> $activityIds
      * @return array<int,array<int,array{name:string,url:string}>>
      * @throws Exception
@@ -326,24 +322,14 @@ class ReviewPresenter extends RequirementsPresenter
     {
         global $gDb;
 
-        if ($activityIds === array()) {
-            return array();
-        }
-
-        $rows = $gDb->getArrayFromSql(
-            'SELECT raf_activity_id, raf_uuid, raf_name
-               FROM ' . RequirementsTables::activityFiles() . '
-              WHERE raf_activity_id IN (' . implode(', ', array_fill(0, count($activityIds), '?')) . ')
-           ORDER BY raf_timestamp_create, raf_id',
-            $activityIds
-        );
-
         $byActivity = array();
-        foreach ($rows as $row) {
-            $byActivity[(int) $row['raf_activity_id']][] = array(
-                'name' => SecurityUtils::encodeHTML((string) $row['raf_name']),
-                'url' => $this->pageUrl('file.php', array('uuid' => $row['raf_uuid']))
-            );
+        foreach ((new ActivityFileService($gDb))->listForActivities($activityIds) as $activityId => $files) {
+            foreach ($files as $file) {
+                $byActivity[$activityId][] = array(
+                    'name' => SecurityUtils::encodeHTML((string) $file['raf_name']),
+                    'url' => $this->pageUrl('file.php', array('uuid' => $file['raf_uuid']))
+                );
+            }
         }
 
         return $byActivity;

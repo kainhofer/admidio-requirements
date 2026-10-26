@@ -11,6 +11,10 @@
  * answer with the address of the next page, and the pages themselves are plain GET requests -
  * which is also what keeps a reload from uploading, or importing, anything a second time.
  *
+ * The upload may be a ZIP holding the spreadsheet and the certificate files its `certificates`
+ * column names. It is unpacked once, in `read`, and the unpacked files are deleted when the import
+ * has run or a new run starts.
+ *
  * @copyright Reinhold Kainhofer
  * @see https://www.admidio.org/
  * @license https://www.gnu.org/licenses/gpl-2.0.html GNU General Public License v2.0 only
@@ -24,6 +28,7 @@ use Admidio\Infrastructure\Utils\PhpIniUtils;
 use Admidio\Infrastructure\Utils\SecurityUtils;
 use AdmidioPlugin\Requirements\Presenter\ImportPresenter;
 use AdmidioPlugin\Requirements\RequirementsPlugin;
+use AdmidioPlugin\Requirements\Service\ImportArchive;
 use AdmidioPlugin\Requirements\Service\ImportService;
 
 try {
@@ -45,6 +50,17 @@ try {
         );
     };
 
+    /**
+     * Forget the wizard state, and delete the certificates of an archive upload with it.
+     */
+    $forgetState = static function (): void {
+        $directory = $_SESSION[ImportPresenter::SESSION_KEY]['archive']['directory'] ?? '';
+        if ($directory !== '') {
+            ImportArchive::remove($directory);
+        }
+        unset($_SESSION[ImportPresenter::SESSION_KEY]);
+    };
+
     switch ($getMode) {
         case 'file':
             if (!PhpIniUtils::isFileUploadEnabled()) {
@@ -53,7 +69,7 @@ try {
 
             // A new run starts with nothing left of the previous one, so a file that was abandoned
             // halfway cannot be imported later by somebody who reaches a later step by its URL.
-            unset($_SESSION[ImportPresenter::SESSION_KEY]);
+            $forgetState();
 
             $page = new ImportPresenter();
             $page->createFileForm();
@@ -81,14 +97,34 @@ try {
                 throw new Exception('SYS_FIELD_EMPTY', array('PLG_REQUIREMENTS_IMPORT_DUPLICATES'));
             }
 
-            $_SESSION[ImportPresenter::SESSION_KEY] = array(
-                'rows' => (new ImportService($gDb))->readFile(
+            $forgetState();
+            $archive = null;
+            if (ImportArchive::isArchiveName((string) ($_FILES['userfile']['name'][0] ?? ''))) {
+                $archive = ImportArchive::extract($upload);
+                $upload = $archive['spreadsheet'];
+            }
+
+            try {
+                $rows = (new ImportService($gDb))->readFile(
                     $upload,
                     (string) ($formValues['format'] ?? 'AUTO'),
                     (string) ($formValues['import_coding'] ?? ''),
                     (string) ($formValues['import_separator'] ?? ''),
                     'AUTO',
                     (string) ($formValues['import_sheet'] ?? '')
+                );
+            } catch (Throwable $readException) {
+                if ($archive !== null) {
+                    ImportArchive::remove($archive['directory']);
+                }
+                throw $readException;
+            }
+
+            $_SESSION[ImportPresenter::SESSION_KEY] = array(
+                'rows' => $rows,
+                'archive' => $archive === null ? null : array(
+                    'directory' => $archive['directory'],
+                    'files' => $archive['files']
                 ),
                 'firstRowHeader' => !empty($formValues['first_row_header']),
                 'duplicates' => $duplicates,
@@ -115,9 +151,20 @@ try {
             // here is exactly the set of columns the page offered.
             $assignments = array();
             foreach ($formValues as $key => $value) {
+                if (str_starts_with($key, 'map_member_profile_')) {
+                    continue;
+                }
                 if (str_starts_with($key, 'map_') && trim((string) $value) !== '') {
                     $assignments[substr($key, strlen('map_'))] = trim((string) $value);
                 }
+            }
+            // The profile field and its column are two answers to one question.
+            $profileField = trim((string) ($formValues['map_member_profile_field'] ?? ''));
+            $profileColumn = trim((string) ($formValues['map_member_profile_column'] ?? ''));
+            if ($profileField !== '' && $profileColumn !== '') {
+                $assignments[ImportService::PROFILE_FIELD_PREFIX . strtolower($profileField)] = $profileColumn;
+            } elseif ($profileField !== '' || $profileColumn !== '') {
+                throw new Exception('PLG_REQUIREMENTS_IMPORT_PROFILE_FIELD_INCOMPLETE');
             }
             $_SESSION[ImportPresenter::SESSION_KEY]['assignments'] = $assignments;
 
@@ -146,7 +193,11 @@ try {
                     $state['firstRowHeader'],
                     Component::isAdministrable(RequirementsPlugin::ID)
                 ),
-                array('firstRowHeader' => $state['firstRowHeader'], 'duplicates' => $state['duplicates'])
+                array(
+                    'firstRowHeader' => $state['firstRowHeader'],
+                    'duplicates' => $state['duplicates'],
+                    'archive' => $state['archive']['files'] ?? null
+                )
             ));
             $gNavigation->addUrl(CURRENT_URL, $page->getHeadline());
             $page->show();
@@ -165,12 +216,16 @@ try {
                     $state['firstRowHeader'],
                     Component::isAdministrable(RequirementsPlugin::ID)
                 ),
-                array('firstRowHeader' => $state['firstRowHeader'], 'duplicates' => $state['duplicates'])
+                array(
+                    'firstRowHeader' => $state['firstRowHeader'],
+                    'duplicates' => $state['duplicates'],
+                    'archive' => $state['archive']['files'] ?? null
+                )
             );
 
             // The file is gone from the session before the result page is offered: leaving it there
             // would let a reload of that page import the same file a second time.
-            unset($_SESSION[ImportPresenter::SESSION_KEY]);
+            $forgetState();
             $_SESSION[ImportPresenter::SESSION_KEY . '_result'] = $result;
 
             echo json_encode(array('status' => 'success', 'url' => $stepUrl('result')));

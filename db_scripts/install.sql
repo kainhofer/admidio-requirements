@@ -92,6 +92,7 @@ CREATE TABLE %PREFIX%_req_requirement_types
     rqt_id                  integer unsigned NOT NULL AUTO_INCREMENT,
     rqt_uuid                varchar(36)      NOT NULL,
     rqt_org_id              integer unsigned NOT NULL,
+    rqt_usr_id              integer unsigned NULL,
     rqt_name                varchar(255)     NOT NULL,
     rqt_short_name          varchar(255)     NULL,
     rqt_description         text             NULL,
@@ -114,13 +115,16 @@ COLLATE = utf8mb4_unicode_ci;
 CREATE UNIQUE INDEX %PREFIX%_idx_rqt_uuid ON %PREFIX%_req_requirement_types (rqt_uuid);
 CREATE INDEX %PREFIX%_idx_rqt_org_sequence ON %PREFIX%_req_requirement_types (rqt_org_id, rqt_sequence, rqt_name);
 CREATE INDEX %PREFIX%_idx_rqt_org_short_name ON %PREFIX%_req_requirement_types (rqt_org_id, rqt_short_name);
+/* A type with an owner is a requirement that member tracks for themselves, seen by nobody else.
+   Its target is a rule without a role, which applies to the owner. */
+CREATE INDEX %PREFIX%_idx_rqt_usr ON %PREFIX%_req_requirement_types (rqt_usr_id);
 
 CREATE TABLE %PREFIX%_req_requirement_role_rules
 (
     rrr_id                              integer unsigned NOT NULL AUTO_INCREMENT,
     rrr_uuid                            varchar(36)      NOT NULL,
     rrr_requirement_type_id             integer unsigned NOT NULL,
-    rrr_role_id                         integer unsigned NOT NULL,
+    rrr_role_id                         integer unsigned NULL,
     rrr_required_credits                decimal(10,2)    NOT NULL,
     rrr_partial_period_mode             varchar(16)      NOT NULL DEFAULT 'pro_rata',
     rrr_membership_at_period_start      boolean          NOT NULL DEFAULT false,
@@ -198,6 +202,7 @@ ALTER TABLE %PREFIX%_req_activities
 
 ALTER TABLE %PREFIX%_req_requirement_types
     ADD CONSTRAINT %PREFIX%_fk_rqt_org FOREIGN KEY (rqt_org_id) REFERENCES %PREFIX%_organizations (org_id) ON DELETE RESTRICT ON UPDATE RESTRICT,
+    ADD CONSTRAINT %PREFIX%_fk_rqt_usr FOREIGN KEY (rqt_usr_id) REFERENCES %PREFIX%_users (usr_id) ON DELETE CASCADE ON UPDATE RESTRICT,
     ADD CONSTRAINT %PREFIX%_fk_rqt_usr_create FOREIGN KEY (rqt_usr_id_create) REFERENCES %PREFIX%_users (usr_id) ON DELETE SET NULL ON UPDATE RESTRICT,
     ADD CONSTRAINT %PREFIX%_fk_rqt_usr_change FOREIGN KEY (rqt_usr_id_change) REFERENCES %PREFIX%_users (usr_id) ON DELETE SET NULL ON UPDATE RESTRICT;
 
