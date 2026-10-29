@@ -23,7 +23,7 @@ final class ActivityListTest extends RequirementsDatabaseTestCase
             ->findActivityRows($filter, $groupBy, $order, $start, $length)['rows'];
     }
 
-    public function testAnActivityIsOneRowPerCreditAndStaysListedWithoutOne(): void
+    public function testAnActivityIsOneRowPerCreditAndARequirementKeepsOnlyItsOwn(): void
     {
         $member = $this->createMember('req_list_rows');
         $cpd = $this->createRequirement('CPD', $member['rol_id'], 10.0);
@@ -44,8 +44,9 @@ final class ActivityListTest extends RequirementsDatabaseTestCase
             'userId' => $member['usr_id'],
             'requirementTypeId' => (int) $ethics->getValue('rqt_id')
         ));
-        $this->assertSame(array('Uncredited', 'Course on 2026-03-01'), array_column($ofEthics, 'rqa_title'));
-        $this->assertSame(1.0, (float) $ofEthics[1]['rac_credits_claimed']);
+        $this->assertSame(array('Course on 2026-03-01'), array_column($ofEthics, 'rqa_title'),
+            'Narrowed to a requirement, an activity without a credit for it is not listed.');
+        $this->assertSame(1.0, (float) $ofEthics[0]['rac_credits_claimed']);
     }
 
     public function testTheDateRangeKeepsEveryActivityThatTouchesIt(): void

@@ -1,11 +1,16 @@
 <?php
 /**
  ***********************************************************************************************
- * Requirements plugin - requirement type and role rule administration (administrators only).
+ * Requirements plugin - the requirements page: the organization's requirements and role rules,
+ * which administrators edit and members see as far as they apply to them, and every member's own
+ * requirements and own targets.
  *
  * Parameters:
- * mode : list (default) | type-edit | type-save | type-delete | rule-edit | rule-save | rule-delete
- * uuid : UUID of the requirement type or role rule
+ * mode : list (default)
+ *        | type-edit | type-save | type-delete | rule-edit | rule-save | rule-delete (administrators)
+ *        | own-edit | own-save | own-delete         a requirement of the member's own
+ *        | target-edit | target-save | target-delete  the member's own target for one of the organization's
+ * uuid : UUID of the requirement type, the role rule or the own target
  * type : UUID of the requirement type a new rule belongs to
  *
  * @copyright Reinhold Kainhofer
@@ -27,14 +32,20 @@ try {
     require_once(__DIR__ . '/../../../system/common.php');
     require(__DIR__ . '/../../../system/login_valid.php');
 
-    if (!Component::isAdministrable(RequirementsPlugin::ID)) {
-        throw new Exception('SYS_NO_RIGHTS');
-    }
-
     $getMode = admFuncVariableIsValid($_GET, 'mode', 'string', array(
         'defaultValue' => 'list',
-        'validValues' => array('list', 'type-edit', 'type-save', 'type-delete', 'rule-edit', 'rule-save', 'rule-delete')
+        'validValues' => array(
+            'list', 'type-edit', 'type-save', 'type-delete', 'rule-edit', 'rule-save', 'rule-delete',
+            'own-edit', 'own-save', 'own-delete', 'target-edit', 'target-save', 'target-delete'
+        )
     ));
+    // The services refuse a write of the administration to anybody else as well; this keeps the
+    // forms of the administration from even being shown.
+    if (str_starts_with($getMode, 'type-') || str_starts_with($getMode, 'rule-')) {
+        if (!Component::isAdministrable(RequirementsPlugin::ID)) {
+            throw new Exception('SYS_NO_RIGHTS');
+        }
+    }
     $getUuid = admFuncVariableIsValid($_GET, 'uuid', 'uuid');
     $getType = admFuncVariableIsValid($_GET, 'type', 'uuid');
     $getQuery = admFuncVariableIsValid($_GET, 'query', 'string');
@@ -42,6 +53,69 @@ try {
     $service = new RequirementTypeService($gDb);
 
     switch ($getMode) {
+        case 'own-edit':
+            $page = new RulePresenter($getUuid);
+            $page->createOwnForm($getUuid);
+            $gNavigation->addUrl(CURRENT_URL, $page->getHeadline());
+            $page->show();
+            break;
+
+        case 'own-save':
+            $type = RulePresenter::readOwnType($getUuid);
+            $formValues = $gCurrentSession->getFormObject($_POST['adm_csrf_token'])->validate($_POST);
+            $values = array();
+            foreach ($formValues as $key => $value) {
+                if (str_starts_with($key, 'rqt_') || str_starts_with($key, 'rrr_')) {
+                    $values[$key] = $value;
+                }
+            }
+            $values['rqt_active'] = (bool) ($formValues['rqt_active'] ?? false);
+            $service->saveOwnType($type, $values);
+
+            $gNavigation->deleteLastUrl();
+            echo json_encode(array('status' => 'success', 'url' => $gNavigation->getUrl()));
+            break;
+
+        case 'own-delete':
+            SecurityUtils::validateCsrfToken($_POST['adm_csrf_token']);
+            $service->deleteOwnType(RulePresenter::readOwnType($getUuid));
+            echo json_encode(array('status' => 'success'));
+            break;
+
+        case 'target-edit':
+            $page = new RulePresenter($getUuid);
+            $page->createTargetForm($getUuid);
+            $gNavigation->addUrl(CURRENT_URL, $page->getHeadline());
+            $page->show();
+            break;
+
+        case 'target-save':
+            $rule = RulePresenter::readOwnTarget($getUuid);
+            $formValues = $gCurrentSession->getFormObject($_POST['adm_csrf_token'])->validate($_POST);
+            $type = new RequirementType($gDb);
+            if ($rule->isNewRecord()) {
+                $type->readDataByUuid((string) ($formValues['rqt_uuid'] ?? ''));
+            } else {
+                $type->readDataById((int) $rule->getValue('rrr_requirement_type_id'));
+            }
+            $values = array();
+            foreach ($formValues as $key => $value) {
+                if (str_starts_with($key, 'rrr_')) {
+                    $values[$key] = $value;
+                }
+            }
+            $service->saveOwnTarget($rule, $type, $values);
+
+            $gNavigation->deleteLastUrl();
+            echo json_encode(array('status' => 'success', 'url' => $gNavigation->getUrl()));
+            break;
+
+        case 'target-delete':
+            SecurityUtils::validateCsrfToken($_POST['adm_csrf_token']);
+            $service->deleteOwnTarget(RulePresenter::readOwnTarget($getUuid));
+            echo json_encode(array('status' => 'success'));
+            break;
+
         case 'list':
             $page = new RulePresenter();
             $page->createList($getQuery);

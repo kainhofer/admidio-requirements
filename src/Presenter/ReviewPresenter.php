@@ -53,7 +53,7 @@ class ReviewPresenter extends RequirementsPresenter
         $this->addPageFunctionsMenuItem('menu_item_requirements_activities',
             $gL10n->get('PLG_REQUIREMENTS_ACTIVITIES'), $this->pageUrl('index.php'), 'bi-clipboard-check');
         $this->addPageFunctionsMenuItem('menu_item_requirements_rules',
-            $gL10n->get('PLG_REQUIREMENTS_REQUIREMENT_TYPES'), $this->pageUrl('rules.php'), 'bi-list-check');
+            $gL10n->get('PLG_REQUIREMENTS_NAME'), $this->pageUrl('rules.php'), 'bi-list-check');
 
         $allTypes = (new RequirementTypeService($gDb))->findTypes();
         if ($allTypes === array()) {

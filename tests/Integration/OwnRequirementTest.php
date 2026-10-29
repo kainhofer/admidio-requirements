@@ -174,6 +174,122 @@ final class OwnRequirementTest extends RequirementsDatabaseTestCase
         $this->assertFalse($beyond['hasEarlier']);
     }
 
+    /**
+     * The IDD case: the organization books credits to a requirement no role carries, and a member
+     * whose employer asks for it sets their own target.
+     */
+    public function testAnOwnTargetGivesAnOrganizationRequirementATargetForThatMemberOnly(): void
+    {
+        $member = $this->createMember('req_target_idd');
+        $other = $this->createMember('req_target_none');
+        $type = $this->organizationRequirementWithoutRules('IDD');
+        $this->createCreditedActivity($member['usr_id'], $type, '2026-03-01', 10.0);
+        $this->createCreditedActivity($other['usr_id'], $type, '2026-03-01', 10.0);
+
+        $this->ownTarget($member['usr_id'], $type, 15.0, '2020-01-01');
+
+        $row = $this->coverageRow($member['usr_id'], $type, '2026-06-01');
+        $this->assertSame(15.0, $row['required']);
+        $this->assertSame('missing', $row['status']);
+        $this->assertSame('additional-credits', $this->coverageRow($other['usr_id'], $type, '2026-06-01')['status'],
+            'The other member\'s credits still count as additional credits.');
+        $this->assertContains((int) $type->getValue('rqt_id'),
+            (new FulfilmentService($this->getDatabase()))->applicableRequirementTypeIds($member['usr_id']));
+    }
+
+    public function testAnOwnTargetIsCombinedWithTheRoleRulesLikeOneMoreRole(): void
+    {
+        $member = $this->createMember('req_target_combined');
+        $type = $this->createRequirement('CPD', $member['rol_id'], 10.0, array('rrr_partial_period_mode' => 'full'));
+
+        $this->ownTarget($member['usr_id'], $type, 25.0, '2020-01-01');
+
+        $this->assertSame(25.0, $this->coverageRow($member['usr_id'], $type, '2026-06-01')['required'],
+            'The maximum of the role rule and the own target.');
+    }
+
+    public function testTheReviewAndTheAdministrationLeaveOwnTargetsOut(): void
+    {
+        $member = $this->createMember('req_target_private');
+        $type = $this->organizationRequirementWithoutRules('IDD');
+        $target = $this->ownTarget($member['usr_id'], $type, 15.0, '2020-01-01');
+        $service = new RequirementTypeService($this->getDatabase());
+
+        $this->assertSame(array(), $service->findRules((int) $type->getValue('rqt_id')));
+        $this->assertRefusedWith('SYS_NO_RIGHTS', fn() => $service->saveRule($target, $type, array('rrr_required_credits' => 1.0)));
+        $this->assertRefusedWith('SYS_NO_RIGHTS', fn() => $service->deleteRule($target));
+
+        $this->createCreditedActivity($member['usr_id'], $type, '2026-03-01', 3.0);
+        $review = (new FulfilmentService($this->getDatabase()))->coverageForMembers((int) $type->getValue('rqt_id'), '2026-06-01');
+        $rows = array_values(array_filter(
+            $review['members'],
+            static fn(array $row): bool => $row['userId'] === $member['usr_id']
+        ));
+        $this->assertCount(1, $rows, 'The member is reviewed for the credits booked to them.');
+        $this->assertNull($rows[0]['required'], 'The review asks what the organization requires, not the member.');
+    }
+
+    public function testAnotherMemberCannotChangeAnOwnTarget(): void
+    {
+        $owner = $this->createMember('req_target_owner');
+        $other = $this->createMember('req_target_intruder');
+        $type = $this->organizationRequirementWithoutRules('IDD');
+        $target = $this->ownTarget($owner['usr_id'], $type, 15.0, '2020-01-01');
+        $service = new RequirementTypeService($this->getDatabase());
+
+        $this->asMember($other['usr_id'], function () use ($service, $target, $type): void {
+            $this->assertRefusedWith('SYS_NO_RIGHTS', fn() => $service->saveOwnTarget($target, $type, array(
+                'rrr_required_credits' => 1.0, 'rrr_valid_from' => '2020-01-01'
+            )));
+            $this->assertRefusedWith('SYS_NO_RIGHTS', fn() => $service->deleteOwnTarget($target));
+        });
+
+        $this->asMember($owner['usr_id'], fn() => $service->deleteOwnTarget($target));
+        $this->assertSame(array(), $service->findOwnTargets($owner['usr_id']));
+    }
+
+    public function testAMemberSeesTheRulesOfTheirOwnRolesOnly(): void
+    {
+        $member = $this->createMember('req_target_roles');
+        $other = $this->createMember('req_target_otherrole');
+        $mine = $this->createRequirement('CPD', $member['rol_id'], 10.0);
+        $theirs = $this->createRequirement('Ethics', $other['rol_id'], 2.0);
+
+        $rules = (new RequirementTypeService($this->getDatabase()))->findRulesForMember($member['usr_id']);
+        $types = array_map('intval', array_column($rules, 'rrr_requirement_type_id'));
+
+        $this->assertContains((int) $mine->getValue('rqt_id'), $types);
+        $this->assertNotContains((int) $theirs->getValue('rqt_id'), $types);
+    }
+
+    private function organizationRequirementWithoutRules(string $name): RequirementType
+    {
+        static $counter = 0;
+        ++$counter;
+
+        $type = new RequirementType($this->getDatabase());
+        (new RequirementTypeService($this->getDatabase()))->saveType($type, array(
+            'rqt_name' => $name . ' ' . $counter,
+            'rqt_short_name' => $name . 'ORG' . $counter,
+            'rqt_period_unit' => 'year',
+            'rqt_period_anchor' => 'calendar'
+        ));
+        return $type;
+    }
+
+    private function ownTarget(int $userId, RequirementType $type, float $credits, string $since): RequirementRoleRule
+    {
+        return $this->asMember($userId, function () use ($type, $credits, $since): RequirementRoleRule {
+            $rule = new RequirementRoleRule($this->getDatabase());
+            (new RequirementTypeService($this->getDatabase()))->saveOwnTarget($rule, $type, array(
+                'rrr_required_credits' => $credits,
+                'rrr_partial_period_mode' => 'pro_rata',
+                'rrr_valid_from' => $since
+            ));
+            return $rule;
+        });
+    }
+
     private function ownRequirement(int $userId, string $name, float $credits, string $since): RequirementType
     {
         return $this->asMember($userId, function () use ($name, $credits, $since): RequirementType {

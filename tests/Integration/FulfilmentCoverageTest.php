@@ -272,7 +272,7 @@ final class FulfilmentCoverageTest extends RequirementsDatabaseTestCase
 
         $this->createCreditedActivity($member['usr_id'], $type, '2026-03-01', 4.0, null, '2026-05-01');
         $this->createCreditedActivity($member['usr_id'], $type, '2025-03-01', 6.0, null, '2025-05-01');
-        // Credited to nothing: it is in the list, but it is not part of any bar.
+        // Credited to nothing: it is in the full list, but it is not part of any bar.
         (new ActivityService($this->getDatabase()))->save(new Activity($this->getDatabase()), array(
             'rqa_title' => 'Uncredited', 'rqa_begin_date' => '2026-04-01'
         ), $member['usr_id']);
@@ -281,7 +281,8 @@ final class FulfilmentCoverageTest extends RequirementsDatabaseTestCase
         $typeId = (int) $type->getValue('rqt_id');
 
         $all = array_column($service->findActivities($member['usr_id'], '', $typeId), 'rqa_title');
-        $this->assertContains('Uncredited', $all, 'Without a period the whole list is shown.');
+        $this->assertSame(array('Course on 2026-03-01', 'Course on 2025-03-01'), $all,
+            'Narrowed to the requirement, the list holds what was credited to it in any period.');
 
         $of2026 = $service->findActivities($member['usr_id'], '', $typeId, array('2026-01-01', '2026-12-31'));
         $this->assertSame(array('Course on 2026-03-01'), array_column($of2026, 'rqa_title'));

@@ -3,7 +3,9 @@
         <div class="card-header">{$sampleLabel}</div>
         <div class="card-body">
             <div class="table-responsive">
-                <table class="table table-condensed table-sm" style="max-width: 100%;">
+                {* No wrapping: squeezed into the width of the page the columns whose text may break shrank
+                   to a few letters. The cells are cut at 60 characters, and the table scrolls. *}
+                <table class="table table-condensed table-sm text-nowrap">
                     <thead>
                         <tr>
                             {foreach $sampleHeaders as $header}
@@ -15,7 +17,7 @@
                         {foreach $sampleRows as $row}
                             <tr>
                                 {foreach $row as $cell}
-                                    <td style="word-break: break-word;">{$cell nofilter}</td>
+                                    <td>{$cell nofilter}</td>
                                 {/foreach}
                             </tr>
                         {/foreach}

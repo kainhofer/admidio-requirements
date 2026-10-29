@@ -40,15 +40,22 @@ therefore an own menu entry; its texts are available in English and German.
   so that a changed requirement does not apply to older periods. A rule demands either the full amount
   or an amount pro rata to the membership, counted by month, week or day. Earlier periods use the
   historical role memberships of Admidio.
-* **Own requirements:** under *My requirements* a member defines requirements of their own, for
-  example the training obligation of their employer, with a target and the day it applies from. They
-  are calculated like the organisation's and appear in the member's overview. Other members never see
-  them, administrators only as credits on the member's activities, and the review and the command line
-  leave them out.
+* **Requirements page:** one page for the organisation's requirements and the member's own.
+  Administrators define the organisation's requirements and role rules there; a member sees, read-only,
+  those that apply to them through their current roles.
+* **Own requirements and own targets:** every member defines requirements of their own, for example the
+  training obligation of their employer, with a target and the day it applies from. A member can also
+  set an own target for a requirement of the organisation that no role of theirs carries - an IDD
+  requirement, say, that the organisation books credits to for everybody who attends a course but that
+  only some members need for their job. Both are calculated like the organisation's requirements and
+  appear in the member's overview. Other members never see them, administrators only as credits on the
+  member's activities, and the review and the command line leave them out.
 * **Fulfilment overview:** above the activity list, for each applicable requirement the credits earned
   against the credits required, for the running period and a configurable number of previous ones,
   with buttons to page back to earlier periods. A requirement that recurs after its last fulfilment
   shows each renewal as the window it is valid for.
+  The same overview is available as a widget of the overview page, with its own setting for who sees
+  it and how many previous periods it shows.
 * **Administrative review:** per requirement and period, the coverage of every member, with the
   accepted credits editable in place (administrators only).
 * **Import:** a wizard reads a CSV or spreadsheet of activities and their credits (file, column

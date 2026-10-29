@@ -125,6 +125,7 @@ CREATE TABLE %PREFIX%_req_requirement_role_rules
     rrr_uuid                            varchar(36)      NOT NULL,
     rrr_requirement_type_id             integer unsigned NOT NULL,
     rrr_role_id                         integer unsigned NULL,
+    rrr_usr_id                          integer unsigned NULL,
     rrr_required_credits                decimal(10,2)    NOT NULL,
     rrr_partial_period_mode             varchar(16)      NOT NULL DEFAULT 'pro_rata',
     rrr_membership_at_period_start      boolean          NOT NULL DEFAULT false,
@@ -144,6 +145,9 @@ COLLATE = utf8mb4_unicode_ci;
 CREATE UNIQUE INDEX %PREFIX%_idx_rrr_uuid ON %PREFIX%_req_requirement_role_rules (rrr_uuid);
 CREATE INDEX %PREFIX%_idx_rrr_req_role_validity ON %PREFIX%_req_requirement_role_rules (rrr_requirement_type_id, rrr_role_id, rrr_valid_from, rrr_valid_until);
 CREATE INDEX %PREFIX%_idx_rrr_role ON %PREFIX%_req_requirement_role_rules (rrr_role_id);
+/* A rule without a role is a member's own target: for a requirement of their own, or for one of the
+   organization's that applies to them through their work rather than through a role. */
+CREATE INDEX %PREFIX%_idx_rrr_usr ON %PREFIX%_req_requirement_role_rules (rrr_usr_id);
 
 CREATE TABLE %PREFIX%_req_activity_credits
 (
@@ -209,6 +213,7 @@ ALTER TABLE %PREFIX%_req_requirement_types
 ALTER TABLE %PREFIX%_req_requirement_role_rules
     ADD CONSTRAINT %PREFIX%_fk_rrr_requirement FOREIGN KEY (rrr_requirement_type_id) REFERENCES %PREFIX%_req_requirement_types (rqt_id) ON DELETE CASCADE ON UPDATE RESTRICT,
     ADD CONSTRAINT %PREFIX%_fk_rrr_role FOREIGN KEY (rrr_role_id) REFERENCES %PREFIX%_roles (rol_id) ON DELETE CASCADE ON UPDATE RESTRICT,
+    ADD CONSTRAINT %PREFIX%_fk_rrr_usr FOREIGN KEY (rrr_usr_id) REFERENCES %PREFIX%_users (usr_id) ON DELETE CASCADE ON UPDATE RESTRICT,
     ADD CONSTRAINT %PREFIX%_fk_rrr_usr_create FOREIGN KEY (rrr_usr_id_create) REFERENCES %PREFIX%_users (usr_id) ON DELETE SET NULL ON UPDATE RESTRICT,
     ADD CONSTRAINT %PREFIX%_fk_rrr_usr_change FOREIGN KEY (rrr_usr_id_change) REFERENCES %PREFIX%_users (usr_id) ON DELETE SET NULL ON UPDATE RESTRICT;
 

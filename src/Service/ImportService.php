@@ -116,8 +116,8 @@ final class ImportService
     /** Excel day serials above this are not a date anybody imports; 60000 is in 2064. */
     private const MAX_EXCEL_SERIAL = 60000;
 
-    /** @var array<int,array<string,mixed>>|null requirement types of the organization, read once */
-    private ?array $requirementTypes = null;
+    /** @var array<int,array<int,array<string,mixed>>> per member, the requirement types they see, read once */
+    private array $requirementTypes = array();
 
     /** @var array<int,array<string,mixed>>|null providers visible to the actor, read once */
     private ?array $providers = null;
@@ -596,7 +596,13 @@ final class ImportService
         $sourceKey = isset($mapping['source_key']) ? $this->cell($row, $mapping['source_key']) : '';
         $values['rqa_source_key'] = $sourceKey === '' ? null : $sourceKey;
 
-        $credits = $this->resolveCredits($row, $mapping, (string) $values['rqa_begin_date']);
+        $credits = $this->resolveCredits(
+            $row,
+            $mapping,
+            (string) $values['rqa_begin_date'],
+            $userId ?? (int) $GLOBALS['gCurrentUser']->getValue('usr_id'),
+            $messages
+        );
 
         $certificates = array();
         if (isset($mapping['certificates'])) {
@@ -701,12 +707,17 @@ final class ImportService
      * matching `period_X` column is optional; without it the contribution is credited to the period
      * the activity falls in, which is what the activity form defaults to.
      *
+     * A requirement is looked for among the organization's and the member's own. A file exported by
+     * one member carries columns for their own requirements, which another member does not have:
+     * those credits are left out with a message on the row rather than failing the activity.
+     *
      * @param array<int,mixed> $row
      * @param array<string,int> $mapping
+     * @param array<int,string> $messages the row's messages, which a left-out credit is added to
      * @return array<int,array{typeId:int,requirement:string,period:string,claimed:float}>
      * @throws Exception|InvalidArgumentException
      */
-    private function resolveCredits(array $row, array $mapping, string $beginDate): array
+    private function resolveCredits(array $row, array $mapping, string $beginDate, int $userId, array &$messages): array
     {
         $credits = array();
         foreach ($mapping as $field => $columnIndex) {
@@ -719,7 +730,11 @@ final class ImportService
                 continue;
             }
 
-            $type = $this->requirementByReference($reference);
+            $type = $this->requirementByReference($reference, $userId);
+            if ($type === null) {
+                $messages[] = 'This member has no requirement "' . $reference . '"; its credits are not imported.';
+                continue;
+            }
             $claimed = $this->parseNumber($raw, $field);
             if ($claimed < 0.0) {
                 throw new InvalidArgumentException('The credits in "' . $field . '" are negative.');
@@ -1050,20 +1065,18 @@ final class ImportService
     }
 
     /**
-     * The requirement type a `credit_X` / `period_X` suffix names: its short name or its id.
+     * The requirement type a `credit_X` / `period_X` suffix names for a member: its short name or its
+     * id, among the organization's requirements and the member's own. Null when there is none.
      *
-     * @return array<string,mixed>
+     * @return array<string,mixed>|null
      * @throws Exception|InvalidArgumentException
      */
-    private function requirementByReference(string $reference): array
+    private function requirementByReference(string $reference, int $userId): ?array
     {
-        // Including the importing member's own requirements; saveCredit() keeps them off the
-        // activities of anybody else an administrator imports for.
-        $this->requirementTypes ??= (new RequirementTypeService($this->db))
-            ->findTypes('', (int) $GLOBALS['gCurrentUser']->getValue('usr_id'));
+        $this->requirementTypes[$userId] ??= (new RequirementTypeService($this->db))->findTypes('', $userId);
 
         $matches = array();
-        foreach ($this->requirementTypes as $type) {
+        foreach ($this->requirementTypes[$userId] as $type) {
             $shortName = trim((string) $type['rqt_short_name']);
             if (($shortName !== '' && strcasecmp($shortName, $reference) === 0)
                 || (ctype_digit($reference) && (int) $type['rqt_id'] === (int) $reference)) {
@@ -1075,7 +1088,7 @@ final class ImportService
             throw new InvalidArgumentException('The requirement "' . $reference . '" is ambiguous.');
         }
         if ($matches === array()) {
-            throw new InvalidArgumentException('The requirement "' . $reference . '" was not found.');
+            return null;
         }
         if (!(bool) $matches[0]['rqt_active']) {
             throw new InvalidArgumentException(

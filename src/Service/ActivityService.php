@@ -300,12 +300,10 @@ final class ActivityService
         if ($requirementTypeId !== null) {
             $creditColumns = 'rac.rac_period_reference, rac.rac_credits_claimed, rac.rac_credits_accepted';
 
-            // Without a period the join is a LEFT one, so the list stays the whole activity list with
-            // the credits of this requirement shown beside it. With a period it becomes an INNER
-            // join: the question is then "what made up this bar", and an activity that contributed
-            // nothing to it is not part of the answer.
-            $creditJoin = ($periodRange === null ? ' LEFT JOIN ' : ' INNER JOIN ')
-                . RequirementsTables::activityCredits() . ' AS rac
+            // Narrowed to a requirement, the list is the activities that count towards it, and with
+            // a period those that made up that bar: an activity without a credit for it is not
+            // part of the answer.
+            $creditJoin = ' INNER JOIN ' . RequirementsTables::activityCredits() . ' AS rac
                     ON rac.rac_activity_id = rqa.rqa_id AND rac.rac_requirement_type_id = ?';
             $params[] = $requirementTypeId;
 
@@ -388,10 +386,10 @@ final class ActivityService
      *
      * A row is one credit of an activity, not the activity: an activity that counts towards two
      * requirements is two rows, because period, requirement and credits are what the list is read
-     * for, and an activity has one of each per requirement. An activity without any credit - or
-     * without one for the requirement the list is narrowed to - is still one row with those cells
-     * empty, so nothing the member entered disappears from their list. Only a period filter, which
-     * asks what made up one bar of the overview, drops the activities that contributed nothing.
+     * for, and an activity has one of each per requirement. An activity without any credit is still
+     * one row with those cells empty, so nothing the member entered disappears from their full list.
+     * A requirement or a period filter asks which activities count towards it, so they keep only
+     * the activities with a credit for it.
      *
      * @param array{userId?:?int,query?:string,requirementTypeId?:?int,periodRange?:?array,
      *     providerId?:?int,dateFrom?:string,dateTo?:string} $filter
@@ -418,7 +416,7 @@ final class ActivityService
 
         $requirementTypeId = $filter['requirementTypeId'] ?? null;
         $periodRange = $filter['periodRange'] ?? null;
-        $creditJoin = ($periodRange === null ? ' LEFT JOIN ' : ' INNER JOIN ')
+        $creditJoin = ($periodRange === null && $requirementTypeId === null ? ' LEFT JOIN ' : ' INNER JOIN ')
             . RequirementsTables::activityCredits() . ' AS rac ON rac.rac_activity_id = rqa.rqa_id';
         if ($requirementTypeId !== null) {
             $creditJoin .= ' AND rac.rac_requirement_type_id = ?';

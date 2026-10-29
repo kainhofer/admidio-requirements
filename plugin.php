@@ -241,3 +241,6 @@ ChangelogService::registerCallback('getPermittedTables', '', static function ($u
         'req_activity_files'
     );
 });
+
+// The fulfilment overview of the activity list, on the overview page as well.
+RequirementsPlugin::registerWidget();

@@ -2,6 +2,7 @@
 namespace AdmidioPlugin\Requirements\Presenter;
 
 use Admidio\Infrastructure\Exception;
+use Admidio\Infrastructure\Plugins\Plugin;
 use Admidio\Infrastructure\Utils\FileSystemUtils;
 use Admidio\Infrastructure\Utils\SecurityUtils;
 use Admidio\UI\Presenter\FormPresenter;
@@ -22,6 +23,34 @@ use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
  */
 class ActivityPresenter extends RequirementsPresenter
 {
+    /**
+     * Give every bar of the fulfilment overview the link to the activities that make it up, which is
+     * the answer to "where does this number come from" - the question a bar always raises and never
+     * answers on its own. Shared by the activity list and the widget of the overview page.
+     *
+     * @param array<int,array<string,mixed>> $overview as FulfilmentService::coverageHistoryForUser() returns it
+     * @param array<int,array<string,mixed>> $types the requirement types the member sees
+     * @return array<int,array<string,mixed>>
+     */
+    public static function linkOverview(array $overview, array $types, Plugin $plugin): array
+    {
+        $uuids = array_column($types, 'rqt_uuid', 'rqt_id');
+        foreach ($overview as $i => $requirement) {
+            $uuid = (string) ($uuids[$requirement['typeId']] ?? '');
+            foreach ($requirement['periods'] as $j => $periodRow) {
+                $overview[$i]['periods'][$j]['url'] = $uuid === '' || $periodRow['periodReference'] === null
+                    ? ''
+                    : SecurityUtils::encodeUrl($plugin->getUrl('index.php'), array_filter(array(
+                        'mode' => 'list',
+                        'requirement' => $uuid,
+                        'period' => $periodRow['periodReference'],
+                        'period_to' => $periodRow['periodTo'] ?? ''
+                    ), static fn($value): bool => $value !== ''));
+            }
+        }
+        return $overview;
+    }
+
     private static function currentUserId(): int
     {
         return (int) $GLOBALS['gCurrentUser']->getValue('usr_id');
@@ -239,18 +268,16 @@ class ActivityPresenter extends RequirementsPresenter
             'bi-upload'
         );
         $this->addPageFunctionsMenuItem(
-            'menu_item_requirements_own',
-            $gL10n->get('PLG_REQUIREMENTS_OWN_REQUIREMENTS'),
-            $this->pageUrl('own.php'),
-            'bi-person-check'
+            'menu_item_requirements_rules',
+            $gL10n->get('PLG_REQUIREMENTS_NAME'),
+            $this->pageUrl('rules.php'),
+            'bi-list-check'
         );
         if ($isAdmin) {
             $this->addPageFunctionsMenuItem('menu_item_requirements_review',
                 $gL10n->get('PLG_REQUIREMENTS_REVIEW'), $this->pageUrl('review.php'), 'bi-clipboard-data');
             $this->addPageFunctionsMenuItem('menu_item_requirements_providers',
                 $gL10n->get('PLG_REQUIREMENTS_PROVIDERS'), $this->pageUrl('providers.php'), 'bi-shop');
-            $this->addPageFunctionsMenuItem('menu_item_requirements_rules',
-                $gL10n->get('PLG_REQUIREMENTS_REQUIREMENT_TYPES'), $this->pageUrl('rules.php'), 'bi-list-check');
             $this->addHistoryMenuItem('activities', array('req_activities', 'req_activity_credits'));
         }
 
@@ -261,29 +288,8 @@ class ActivityPresenter extends RequirementsPresenter
         $previousPeriods = (int) (RequirementsPlugin::setting(RequirementsPlugin::SETTING_OVERVIEW_PREVIOUS_YEARS) ?? 4);
         $overviewOffset = max(0, $overviewOffset);
         $overview = $fulfilment->coverageHistoryForUser($userId, $previousPeriods, $overviewOffset);
-        $hasEarlier = false;
-        // Each bar links to the activities that make it up, which is the answer to "where does this
-        // number come from" - the question a bar always raises and never answers on its own.
-        foreach ($overview as $i => $requirement) {
-            $uuid = '';
-            foreach ($allTypes as $t) {
-                if ((int) $t['rqt_id'] === (int) $requirement['typeId']) {
-                    $uuid = (string) $t['rqt_uuid'];
-                    break;
-                }
-            }
-            $hasEarlier = $hasEarlier || $requirement['hasEarlier'];
-            foreach ($requirement['periods'] as $j => $periodRow) {
-                $overview[$i]['periods'][$j]['url'] = $uuid === '' || $periodRow['periodReference'] === null
-                    ? ''
-                    : $this->pageUrl('index.php', array_filter(array(
-                        'mode' => 'list',
-                        'requirement' => $uuid,
-                        'period' => $periodRow['periodReference'],
-                        'period_to' => $periodRow['periodTo'] ?? ''
-                    ), static fn($value): bool => $value !== ''));
-            }
-        }
+        $hasEarlier = in_array(true, array_column($overview, 'hasEarlier'), true);
+        $overview = self::linkOverview($overview, $allTypes, $this->plugin);
         $this->assignSmartyVariable('overview', $overview);
         // Paging through the overview keeps whatever narrows the list below it.
         $overviewUrl = fn(int $offset): string => $this->pageUrl('index.php', array_filter(array(

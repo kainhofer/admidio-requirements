@@ -124,6 +124,8 @@
   <string name="PLG_REQUIREMENTS_NEXT_DUE">Next due</string>
   <string name="PLG_REQUIREMENTS_NOT_SPECIFIED">Not specified</string>
   <string name="PLG_REQUIREMENTS_NO_ROLE_RULES">No role rules defined for this requirement type yet.</string>
+  <string name="PLG_REQUIREMENTS_ORGANIZATION_REQUIREMENTS">Requirements of the organization</string>
+  <string name="PLG_REQUIREMENTS_ORGANIZATION_REQUIREMENTS_MEMBER_DESC">What the organization asks of you through your current roles.</string>
   <string name="PLG_REQUIREMENTS_OVERVIEW_EARLIER">Earlier periods</string>
   <string name="PLG_REQUIREMENTS_OVERVIEW_HEADLINE">Requirement fulfilment</string>
   <string name="PLG_REQUIREMENTS_OVERVIEW_LATER">Later periods</string>
@@ -133,9 +135,12 @@
   <string name="PLG_REQUIREMENTS_OWN_NONE">You have not defined any requirements of your own yet.</string>
   <string name="PLG_REQUIREMENTS_OWN_REQUIREMENT">Own requirement</string>
   <string name="PLG_REQUIREMENTS_OWN_REQUIREMENTS">My requirements</string>
-  <string name="PLG_REQUIREMENTS_OWN_REQUIREMENTS_DESC">Requirements you track for yourself in addition to those of the organization, for example the training obligations of your employer or of a licence. Other members do not see them, and administrators only as the credits on your activities. Credit your activities to them like to any other requirement.</string>
+  <string name="PLG_REQUIREMENTS_OWN_REQUIREMENTS_DESC">Requirements you track for yourself in addition to those of the organization, for example the training obligations of your employer or of a licence, and your own targets for requirements of the organization that apply to you through your work. Other members do not see them, and administrators only as the credits on your activities. Credit your activities to them like to any other requirement.</string>
   <string name="PLG_REQUIREMENTS_OWN_SINCE">Applies since</string>
   <string name="PLG_REQUIREMENTS_OWN_SINCE_HELP">The day your obligation begins. Nothing is owed for the periods before it, and the period it falls into is pro-rated when partial periods are pro-rated.</string>
+  <string name="PLG_REQUIREMENTS_OWN_TARGET">Own target</string>
+  <string name="PLG_REQUIREMENTS_OWN_TARGET_ADD">Set own target for a requirement</string>
+  <string name="PLG_REQUIREMENTS_OWN_TARGET_HELP">A requirement of the organization that applies to you through your work rather than through one of your roles, for example the IDD hours of your employer. Your target is combined with any role rule of the requirement as if it were one more role.</string>
   <string name="PLG_REQUIREMENTS_PARTIAL_FULL">Full amount regardless of partial membership</string>
   <string name="PLG_REQUIREMENTS_PARTIAL_PERIOD_MODE">Partial period</string>
   <string name="PLG_REQUIREMENTS_PARTIAL_PRO_RATA">Pro rata to the qualifying membership</string>
@@ -217,4 +222,8 @@
   <string name="PLG_REQUIREMENTS_VIEW_RESET">Reset to defaults</string>
   <string name="PLG_REQUIREMENTS_WARNING_MIXED_RULES">The role &quot;#VAR1#&quot; has both full and pro-rata rules in this period. The higher of the two obligations is used; correct the rules.</string>
   <string name="PLG_REQUIREMENTS_WARNING_SEVERAL_FULL_RULES">The role &quot;#VAR1#&quot; has several full-amount rules in this period. The highest value is used; correct the rules.</string>
+  <string name="PLG_REQUIREMENTS_WIDGET_ENABLED">Fulfilment overview on the overview page</string>
+  <string name="PLG_REQUIREMENTS_WIDGET_ENABLED_DESC">Shows every member the fulfilment of their requirements as a widget on the overview page.</string>
+  <string name="PLG_REQUIREMENTS_WIDGET_PREVIOUS_PERIODS">Previous periods in the widget</string>
+  <string name="PLG_REQUIREMENTS_WIDGET_PREVIOUS_PERIODS_DESC">Number of periods before the running one that the widget on the overview page shows.</string>
 </resources>

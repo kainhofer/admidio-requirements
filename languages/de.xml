@@ -124,6 +124,8 @@
   <string name="PLG_REQUIREMENTS_NEXT_DUE">Nächste Fälligkeit</string>
   <string name="PLG_REQUIREMENTS_NOT_SPECIFIED">Nicht angegeben</string>
   <string name="PLG_REQUIREMENTS_NO_ROLE_RULES">Für diesen Anforderungstyp sind noch keine Rollenregeln definiert.</string>
+  <string name="PLG_REQUIREMENTS_ORGANIZATION_REQUIREMENTS">Anforderungen der Organisation</string>
+  <string name="PLG_REQUIREMENTS_ORGANIZATION_REQUIREMENTS_MEMBER_DESC">Was die Organisation über deine aktuellen Rollen von dir verlangt.</string>
   <string name="PLG_REQUIREMENTS_OVERVIEW_EARLIER">Frühere Zeiträume</string>
   <string name="PLG_REQUIREMENTS_OVERVIEW_HEADLINE">Anforderungserfüllung</string>
   <string name="PLG_REQUIREMENTS_OVERVIEW_LATER">Spätere Zeiträume</string>
@@ -133,9 +135,12 @@
   <string name="PLG_REQUIREMENTS_OWN_NONE">Du hast noch keine eigenen Anforderungen angelegt.</string>
   <string name="PLG_REQUIREMENTS_OWN_REQUIREMENT">Eigene Anforderung</string>
   <string name="PLG_REQUIREMENTS_OWN_REQUIREMENTS">Meine Anforderungen</string>
-  <string name="PLG_REQUIREMENTS_OWN_REQUIREMENTS_DESC">Anforderungen, die du zusätzlich zu denen der Organisation für dich selbst verfolgst, zum Beispiel Weiterbildungspflichten deines Arbeitgebers oder einer Berufsberechtigung. Andere Mitglieder sehen sie nicht, Administratoren nur als Gutschriften auf deinen Aktivitäten. Deine Aktivitäten kannst du ihnen wie jeder anderen Anforderung gutschreiben.</string>
+  <string name="PLG_REQUIREMENTS_OWN_REQUIREMENTS_DESC">Anforderungen, die du zusätzlich zu denen der Organisation für dich selbst verfolgst, zum Beispiel Weiterbildungspflichten deines Arbeitgebers oder einer Berufsberechtigung, und deine eigenen Vorgaben für Anforderungen der Organisation, die für dich über deinen Beruf gelten. Andere Mitglieder sehen sie nicht, Administratoren nur als Gutschriften auf deinen Aktivitäten. Deine Aktivitäten kannst du ihnen wie jeder anderen Anforderung gutschreiben.</string>
   <string name="PLG_REQUIREMENTS_OWN_SINCE">Gilt seit</string>
   <string name="PLG_REQUIREMENTS_OWN_SINCE_HELP">Der Tag, ab dem deine Verpflichtung besteht. Für Zeiträume davor ist nichts zu erbringen, der Zeitraum, in den er fällt, wird anteilig berechnet, wenn Teilzeiträume anteilig berechnet werden.</string>
+  <string name="PLG_REQUIREMENTS_OWN_TARGET">Eigene Vorgabe</string>
+  <string name="PLG_REQUIREMENTS_OWN_TARGET_ADD">Eigene Vorgabe für eine Anforderung festlegen</string>
+  <string name="PLG_REQUIREMENTS_OWN_TARGET_HELP">Eine Anforderung der Organisation, die für dich nicht über eine deiner Rollen, sondern über deinen Beruf gilt, zum Beispiel die IDD-Stunden deines Arbeitgebers. Deine Vorgabe wird mit den Rollenregeln der Anforderung kombiniert, als wäre sie eine weitere Rolle.</string>
   <string name="PLG_REQUIREMENTS_PARTIAL_FULL">Voller Betrag unabhängig von Teilmitgliedschaft</string>
   <string name="PLG_REQUIREMENTS_PARTIAL_PERIOD_MODE">Teilzeitraum</string>
   <string name="PLG_REQUIREMENTS_PARTIAL_PRO_RATA">Anteilig zur zutreffenden Mitgliedschaft</string>
@@ -217,4 +222,8 @@
   <string name="PLG_REQUIREMENTS_VIEW_RESET">Auf Standard zurücksetzen</string>
   <string name="PLG_REQUIREMENTS_WARNING_MIXED_RULES">Für die Rolle &quot;#VAR1#&quot; gibt es in diesem Zeitraum sowohl volle als auch anteilige Regeln. Es wird die höhere der beiden Verpflichtungen verwendet; bitte die Regeln korrigieren.</string>
   <string name="PLG_REQUIREMENTS_WARNING_SEVERAL_FULL_RULES">Für die Rolle &quot;#VAR1#&quot; gibt es in diesem Zeitraum mehrere Regeln mit vollem Betrag. Es wird der höchste Wert verwendet; bitte die Regeln korrigieren.</string>
+  <string name="PLG_REQUIREMENTS_WIDGET_ENABLED">Erfüllungsübersicht auf der Startseite</string>
+  <string name="PLG_REQUIREMENTS_WIDGET_ENABLED_DESC">Zeigt jedem Mitglied die Erfüllung seiner Anforderungen als Widget auf der Startseite.</string>
+  <string name="PLG_REQUIREMENTS_WIDGET_PREVIOUS_PERIODS">Frühere Zeiträume im Widget</string>
+  <string name="PLG_REQUIREMENTS_WIDGET_PREVIOUS_PERIODS_DESC">Anzahl der Zeiträume vor dem laufenden, die das Widget auf der Startseite anzeigt.</string>
 </resources>

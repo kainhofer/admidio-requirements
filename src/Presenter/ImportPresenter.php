@@ -64,7 +64,14 @@ class ImportPresenter extends RequirementsPresenter
         ));
         $form->addFileUpload('userfile', $gL10n->get('SYS_CHOOSE_FILE'), array(
             'property' => FormPresenter::FIELD_REQUIRED,
+            // The extensions as well: a browser checks a dropped file against this list, and a
+            // dragged ZIP often arrives without a MIME type or with a generic one.
             'allowedMimeTypes' => array(
+                '.csv',
+                '.xlsx',
+                '.xls',
+                '.ods',
+                '.zip',
                 'text/comma-separated-values',
                 'text/csv',
                 'text/plain',

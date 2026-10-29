@@ -3,8 +3,10 @@ namespace AdmidioPlugin\Requirements\Tests\Integration;
 
 use AdmidioPlugin\Requirements\Database\RequirementsTables;
 use AdmidioPlugin\Requirements\Entity\Provider;
+use AdmidioPlugin\Requirements\Entity\RequirementType;
 use AdmidioPlugin\Requirements\Service\ImportService;
 use AdmidioPlugin\Requirements\Service\ProviderService;
+use AdmidioPlugin\Requirements\Service\RequirementTypeService;
 use AdmidioPlugin\Requirements\Tests\Support\RequirementsDatabaseTestCase;
 use InvalidArgumentException;
 use PhpOffice\PhpSpreadsheet\Shared\Date as SpreadsheetDate;
@@ -275,7 +277,11 @@ final class ActivityImportTest extends RequirementsDatabaseTestCase
         )->fetchAll(\PDO::FETCH_COLUMN)));
     }
 
-    public function testAnUnknownRequirementIsAnErrorOnThatRow(): void
+    /**
+     * The activity is imported and the row says which credits were left out, so the preview shows
+     * a misspelt requirement before anything is written.
+     */
+    public function testAnUnknownRequirementLeavesItsCreditsOutOfTheRow(): void
     {
         $this->createMember('req_imp_req');
 
@@ -286,8 +292,44 @@ final class ActivityImportTest extends RequirementsDatabaseTestCase
 
         $result = $this->import($file);
 
-        $this->assertSame(1, $result['summary']['error']);
-        $this->assertStringContainsString('"nosuch" was not found', $result['rows'][0]['messages'][0]);
+        $this->assertSame(0, $result['summary']['error']);
+        $this->assertSame(1, $result['summary']['create']);
+        $this->assertStringContainsString('no requirement "nosuch"', $result['rows'][0]['messages'][0]);
+        $this->assertSame(array(), $result['rows'][0]['credits']);
+    }
+
+    /**
+     * A member's export carries a column for each of their own requirements. Imported for another
+     * member, the credits go to that member's requirement of the same name, or are left out.
+     */
+    public function testOwnRequirementsAreThoseOfTheMemberOfTheRow(): void
+    {
+        $owner = $this->createMember('req_imp_own');
+        $other = $this->createMember('req_imp_other');
+        $this->asMember($owner['usr_id'], fn() => (new RequirementTypeService($this->getDatabase()))->saveOwnType(
+            new RequirementType($this->getDatabase()),
+            array(
+                'rqt_name' => 'Own licence',
+                'rqt_short_name' => 'OWN',
+                'rqt_period_unit' => 'year',
+                'rqt_period_anchor' => 'calendar',
+                'rrr_required_credits' => 5.0,
+                'rrr_valid_from' => '2020-01-01'
+            )
+        ));
+
+        $file = $this->csv(array(
+            array('user_login', 'title', 'begin_date', 'credit_OWN'),
+            array('req_imp_own', 'Licence course', '2026-03-01', '5'),
+            array('req_imp_other', 'Licence course', '2026-03-01', '5')
+        ));
+
+        $result = $this->import($file);
+
+        $this->assertSame(2, $result['summary']['create']);
+        $this->assertSame('Own licence', $result['rows'][0]['credits'][0]['requirement']);
+        $this->assertSame(array(), $result['rows'][1]['credits']);
+        $this->assertStringContainsString('no requirement "own"', $result['rows'][1]['messages'][0]);
     }
 
     /**

@@ -833,14 +833,15 @@ final class FulfilmentService
             array($userId, DATE_NOW, DATE_NOW, (int) $gCurrentOrgId)
         )->fetchAll(\PDO::FETCH_COLUMN);
 
-        // A member's own requirements apply to them while their rule is valid.
+        // So do the requirements the member set a target of their own for - their own and the
+        // organization's - while that target is valid.
         $own = $this->db->queryPrepared(
             'SELECT DISTINCT rqt.rqt_id
                FROM ' . RequirementsTables::requirementTypes() . ' AS rqt
          INNER JOIN ' . RequirementsTables::requirementRoleRules() . ' AS rrr
                  ON rrr.rrr_requirement_type_id = rqt.rqt_id
               WHERE rqt.rqt_org_id = ?
-                AND rqt.rqt_usr_id = ?
+                AND rrr.rrr_usr_id = ?
                 AND (rrr.rrr_valid_from IS NULL OR rrr.rrr_valid_from <= ?)
                 AND (rrr.rrr_valid_until IS NULL OR rrr.rrr_valid_until >= ?)',
             array((int) $gCurrentOrgId, $userId, DATE_NOW, DATE_NOW)
@@ -1075,9 +1076,10 @@ final class FulfilmentService
      * The rules of a requirement that touch a period and the member's memberships of their roles in
      * it - everything calculateRequiredCredits() needs to know about this member.
      *
-     * A rule without a role is the target of a member's own requirement and applies to its owner
-     * for as long as the rule is valid, which is expressed as a membership of the pseudo role 0
-     * without end: the rule's validity is what bounds it, and pro-rating it works as for a role.
+     * A rule without a role is the member's own target - for a requirement of their own or for one
+     * of the organization's - and applies to them for as long as it is valid. That is expressed as
+     * a membership of the pseudo role 0 without end: the rule's validity is what bounds it, and
+     * pro-rating and combining it with role rules work as for a role.
      *
      * @return array{0:array<int,array<string,mixed>>,1:array<int,array<int,array{start:string,end:string}>>}
      * @throws Exception
@@ -1088,13 +1090,13 @@ final class FulfilmentService
         DateTimeImmutable $start,
         DateTimeImmutable $end
     ): array {
-        $rules = $this->loadRules($type, $start, $end);
+        $rules = $this->loadRules($type, $start, $end, $userId);
         $roleIds = array_values(array_unique(array_map(
             static fn(array $rule): int => (int) $rule['rrr_role_id'],
             $rules
         )));
         $memberships = $this->loadMemberships($userId, array_values(array_diff($roleIds, array(0))), $start, $end);
-        if (in_array(0, $roleIds, true) && RequirementTypeService::ownerOf($type) === $userId) {
+        if (in_array(0, $roleIds, true)) {
             $memberships[0] = array(array('start' => '0001-01-01', 'end' => '9999-12-31'));
         }
 
@@ -1131,10 +1133,18 @@ final class FulfilmentService
     }
 
     /**
+     * The rules of a requirement that touch a period: the role rules, and with $userId that
+     * member's own target. Nobody else's target is ever part of it, so the review, which asks for
+     * no member, sees role rules only.
+     *
      * @return array<int,array<string,mixed>>
      */
-    private function loadRules(RequirementType $type, DateTimeImmutable $start, DateTimeImmutable $end): array
-    {
+    private function loadRules(
+        RequirementType $type,
+        DateTimeImmutable $start,
+        DateTimeImmutable $end,
+        ?int $userId = null
+    ): array {
         global $gCurrentOrgId;
 
         $statement = $this->db->queryPrepared(
@@ -1145,13 +1155,15 @@ final class FulfilmentService
           LEFT JOIN ' . TBL_CATEGORIES . ' AS cat
                  ON cat.cat_id = rol.rol_cat_id
               WHERE rrr.rrr_requirement_type_id = ?
-                AND (rrr.rrr_role_id IS NULL OR cat.cat_org_id = ?)
+                AND ((rrr.rrr_role_id IS NOT NULL AND cat.cat_org_id = ?)
+                    OR (rrr.rrr_role_id IS NULL AND rrr.rrr_usr_id = ?))
                 AND (rrr.rrr_valid_from IS NULL OR rrr.rrr_valid_from <= ?)
                 AND (rrr.rrr_valid_until IS NULL OR rrr.rrr_valid_until >= ?)
               ORDER BY rrr.rrr_role_id, rrr.rrr_valid_from, rrr.rrr_id',
             array(
                 (int)$type->getValue('rqt_id'),
                 (int)$gCurrentOrgId,
+                $userId ?? 0,
                 $end->format('Y-m-d'),
                 $start->format('Y-m-d')
             )

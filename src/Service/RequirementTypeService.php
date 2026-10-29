@@ -150,13 +150,18 @@ final class RequirementTypeService
             }
         }
 
+        // A member's own target is theirs to change, like a requirement of their own.
+        if ((int)$rule->getValue('rrr_usr_id') > 0) {
+            throw new Exception('SYS_NO_RIGHTS');
+        }
+
         $roleId = (int)($values['rrr_role_id'] ?? $rule->getValue('rrr_role_id'));
         $role = new Role($this->db, $roleId);
         if ((int)$role->getValue('rol_id') === 0 || (int)$role->getValue('cat_org_id') !== (int)$gCurrentOrgId) {
             throw new Exception('SYS_NO_RIGHTS');
         }
 
-        $this->applyRuleValues($rule, $type, $roleId, $values);
+        $this->applyRuleValues($rule, $type, $roleId, null, $values);
 
         $this->db->startTransaction();
         try {
@@ -171,13 +176,18 @@ final class RequirementTypeService
     }
 
     /**
-     * Validate and set the fields of a rule. $roleId null is the rule of a member's own
-     * requirement, which applies to its owner rather than to the holders of a role.
+     * Validate and set the fields of a rule: for the holders of $roleId, or - with $userId instead -
+     * a member's own target, for a requirement of their own or one of the organization's.
      *
      * @throws Exception
      */
-    private function applyRuleValues(RequirementRoleRule $rule, RequirementType $type, ?int $roleId, array $values): void
-    {
+    private function applyRuleValues(
+        RequirementRoleRule $rule,
+        RequirementType $type,
+        ?int $roleId,
+        ?int $userId,
+        array $values
+    ): void {
         $mode = (string)($values['rrr_partial_period_mode'] ?? ($rule->getValue('rrr_partial_period_mode') ?: 'pro_rata'));
         $basis = (string)($values['rrr_proration_basis']
             ?? ($rule->getValue('rrr_proration_basis')
@@ -201,6 +211,7 @@ final class RequirementTypeService
 
         $rule->setValue('rrr_requirement_type_id', (int)$type->getValue('rqt_id'));
         $rule->setValue('rrr_role_id', $roleId);
+        $rule->setValue('rrr_usr_id', $userId);
         $rule->setValue('rrr_required_credits', number_format($credits, 2, '.', ''));
         $rule->setValue('rrr_partial_period_mode', $mode);
         $rule->setValue('rrr_membership_at_period_start', (bool)($values['rrr_membership_at_period_start']
@@ -346,7 +357,8 @@ final class RequirementTypeService
          INNER JOIN ' . RequirementsTables::requirementTypes() . '
                  ON rqt_id = rrr_requirement_type_id
               WHERE rrr_id = ?
-                AND rqt_usr_id IS NULL',
+                AND rqt_usr_id IS NULL
+                AND rrr_role_id IS NOT NULL',
             array((int) $rule->getValue('rrr_id'))
         )->fetchColumn();
         if ($ruleOrg !== (int) $gCurrentOrgId) {
@@ -361,6 +373,47 @@ final class RequirementTypeService
             $this->db->rollback();
             throw $exception;
         }
+    }
+
+    /**
+     * The rules of the organization's requirements for the roles a member holds today - what the
+     * organization asks of them, which is all of the organization's requirements a member is shown.
+     *
+     * @return array<int,array<string,mixed>> rows as findRules() returns them
+     */
+    public function findRulesForMember(int $userId): array
+    {
+        global $gCurrentOrgId;
+
+        $rules = $this->db->getArrayFromSql(
+            'SELECT rrr.rrr_id, rrr.rrr_uuid, rrr.rrr_requirement_type_id, rrr.rrr_role_id,
+                    rrr.rrr_required_credits, rrr.rrr_partial_period_mode,
+                    rrr.rrr_membership_at_period_start, rrr.rrr_proration_basis,
+                    rrr.rrr_valid_from, rrr.rrr_valid_until,
+                    rol.rol_name AS role_name, rqt.rqt_name AS requirement_name,
+                    rqt.rqt_uuid AS requirement_uuid
+               FROM ' . RequirementsTables::requirementRoleRules() . ' AS rrr
+         INNER JOIN ' . RequirementsTables::requirementTypes() . ' AS rqt
+                 ON rqt.rqt_id = rrr.rrr_requirement_type_id
+         INNER JOIN ' . TBL_ROLES . ' AS rol
+                 ON rol.rol_id = rrr.rrr_role_id
+         INNER JOIN ' . TBL_MEMBERS . ' AS mem
+                 ON mem.mem_rol_id = rrr.rrr_role_id
+                AND mem.mem_usr_id = ?
+                AND mem.mem_begin <= ?
+                AND mem.mem_end >= ?
+              WHERE rqt.rqt_org_id = ?
+                AND rqt.rqt_usr_id IS NULL
+                AND rqt.rqt_active = true
+                AND (rrr.rrr_valid_until IS NULL OR rrr.rrr_valid_until >= ?)
+              ORDER BY rqt.rqt_sequence, rqt.rqt_name, rol.rol_name, rrr.rrr_valid_from',
+            array($userId, DATE_NOW, DATE_NOW, (int) $gCurrentOrgId, DATE_NOW)
+        );
+
+        return array_map(static function (array $rule): array {
+            $rule['role_name'] = Language::translateIfTranslationStrId((string) $rule['role_name']);
+            return $rule;
+        }, $rules);
     }
 
     /**
@@ -386,15 +439,115 @@ final class RequirementTypeService
     }
 
     /**
-     * The one rule of a member's own requirement, or a new one if it has none yet.
+     * A member's own target for a requirement - the one rule of a requirement of their own, or
+     * their target for one of the organization's - or a new rule if there is none yet.
      */
-    public function ownRule(RequirementType $type): RequirementRoleRule
+    public function ownRule(RequirementType $type, int $userId): RequirementRoleRule
     {
         $rule = new RequirementRoleRule($this->db);
         if ((int) $type->getValue('rqt_id') > 0) {
-            $rule->readDataByColumns(array('rrr_requirement_type_id' => (int) $type->getValue('rqt_id')));
+            $rule->readDataByColumns(array(
+                'rrr_requirement_type_id' => (int) $type->getValue('rqt_id'),
+                'rrr_usr_id' => $userId
+            ));
         }
         return $rule;
+    }
+
+    /**
+     * The member's own targets for requirements of the organization, with the requirement.
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    public function findOwnTargets(int $userId): array
+    {
+        global $gCurrentOrgId;
+
+        return $this->db->getArrayFromSql(
+            'SELECT rqt.*, rrr.rrr_uuid, rrr.rrr_required_credits, rrr.rrr_partial_period_mode,
+                    rrr.rrr_valid_from, rrr.rrr_valid_until
+               FROM ' . RequirementsTables::requirementRoleRules() . ' AS rrr
+         INNER JOIN ' . RequirementsTables::requirementTypes() . ' AS rqt
+                 ON rqt.rqt_id = rrr.rrr_requirement_type_id
+              WHERE rqt.rqt_org_id = ?
+                AND rqt.rqt_usr_id IS NULL
+                AND rrr.rrr_usr_id = ?
+              ORDER BY rqt.rqt_sequence, rqt.rqt_name, rqt.rqt_id',
+            array((int) $gCurrentOrgId, $userId)
+        );
+    }
+
+    /**
+     * Save the current member's own target for a requirement of the organization: one that does
+     * not apply to them through a role - an insurance-distribution obligation of their employer,
+     * say - but that they want to track against the credits the organization books to it.
+     *
+     * The target is a rule for the member instead of a role, so it is combined with any role rule
+     * of the requirement by its multiple-roles mode, as if it were one more role. Nobody else sees
+     * it: the administration and the review deal in role rules only.
+     *
+     * @param array<string,mixed> $values rrr_* fields
+     * @throws Exception
+     */
+    public function saveOwnTarget(RequirementRoleRule $rule, RequirementType $type, array $values): RequirementRoleRule
+    {
+        global $gCurrentOrgId, $gCurrentUser;
+
+        $userId = (int) $gCurrentUser->getValue('usr_id');
+        if (!RequirementsPlugin::isUsableByCurrentUser()
+            || (int) $type->getValue('rqt_id') === 0
+            || (int) $type->getValue('rqt_org_id') !== (int) $gCurrentOrgId
+            || self::ownerOf($type) !== null
+            || (!$rule->isNewRecord() && (
+                (int) $rule->getValue('rrr_usr_id') !== $userId
+                || (int) $rule->getValue('rrr_requirement_type_id') !== (int) $type->getValue('rqt_id')
+            ))) {
+            throw new Exception('SYS_NO_RIGHTS');
+        }
+        if ($rule->isNewRecord() && !(bool) $type->getValue('rqt_active')) {
+            throw new Exception('SYS_INVALID_PAGE_VIEW');
+        }
+        if ((string) ($values['rrr_valid_from'] ?? '') === '') {
+            throw new Exception('SYS_FIELD_EMPTY', array('PLG_REQUIREMENTS_OWN_SINCE'));
+        }
+
+        $this->applyRuleValues($rule, $type, null, $userId, $values);
+
+        $this->db->startTransaction();
+        try {
+            $rule->save();
+            $this->db->endTransaction();
+        } catch (Throwable $exception) {
+            $this->db->rollback();
+            throw $exception;
+        }
+
+        return $rule;
+    }
+
+    /**
+     * Delete one of the current member's own targets for a requirement of the organization.
+     *
+     * @throws Exception
+     */
+    public function deleteOwnTarget(RequirementRoleRule $rule): void
+    {
+        global $gCurrentUser;
+
+        if (!RequirementsPlugin::isUsableByCurrentUser()
+            || (int) $rule->getValue('rrr_id') === 0
+            || (int) $rule->getValue('rrr_usr_id') !== (int) $gCurrentUser->getValue('usr_id')) {
+            throw new Exception('SYS_NO_RIGHTS');
+        }
+
+        $this->db->startTransaction();
+        try {
+            $rule->delete();
+            $this->db->endTransaction();
+        } catch (Throwable $exception) {
+            $this->db->rollback();
+            throw $exception;
+        }
     }
 
     /**
@@ -434,8 +587,8 @@ final class RequirementTypeService
         $this->db->startTransaction();
         try {
             $type->save();
-            $rule = $this->ownRule($type);
-            $this->applyRuleValues($rule, $type, null, $values);
+            $rule = $this->ownRule($type, $userId);
+            $this->applyRuleValues($rule, $type, null, $userId, $values);
             $rule->save();
             $this->db->endTransaction();
         } catch (Throwable $exception) {
@@ -475,6 +628,7 @@ final class RequirementTypeService
                   FROM ' . RequirementsTables::requirementRoleRules() . '
                  WHERE rrr_requirement_type_id = ?
                    AND COALESCE(rrr_role_id, 0) = ?
+                   AND COALESCE(rrr_usr_id, 0) = ?
                    AND rrr_id <> ?
                    AND (rrr_valid_until IS NULL OR ? IS NULL OR rrr_valid_until >= ?)
                    AND (rrr_valid_from IS NULL OR ? IS NULL OR rrr_valid_from <= ?)';
@@ -482,6 +636,7 @@ final class RequirementTypeService
         $params = array(
             (int)$rule->getValue('rrr_requirement_type_id'),
             (int)$rule->getValue('rrr_role_id'),
+            (int)$rule->getValue('rrr_usr_id'),
             (int)$rule->getValue('rrr_id'),
             $from,
             $from,
