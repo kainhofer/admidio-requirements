@@ -7,13 +7,14 @@
     .adm-req-overview .adm-req-bars { display: flex; gap: .5rem; flex-wrap: wrap; flex: 1 1 auto; }
     .adm-req-overview .adm-req-bar { flex: 1 1 5rem; min-width: 4.5rem; }
     .adm-req-overview .adm-req-bar-label { font-size: .75rem; font-weight: 700; }
-    .adm-req-overview .adm-req-track { position: relative; height: 1.1rem; background: var(--bs-secondary-bg, #e9ecef); border-radius: .2rem; overflow: hidden; }
+    .adm-req-overview .adm-req-track { position: relative; height: 1.2rem; background: var(--bs-secondary-bg, #e9ecef); border-radius: .2rem; overflow: hidden; }
     .adm-req-overview .adm-req-fill { position: absolute; top: 0; left: 0; bottom: 0; }
     .adm-req-overview .adm-req-fill.ok { background: var(--bs-success, #198754); }
     .adm-req-overview .adm-req-fill.miss { background: var(--bs-warning, #ffc107); }
     .adm-req-overview .adm-req-fill.over { background: var(--bs-danger, #dc3545); }
     .adm-req-overview .adm-req-fill.none { background: var(--bs-secondary, #adb5bd); }
     .adm-req-overview .adm-req-val { font-size: .75rem; }
+    .adm-req-overview .adm-req-val-in { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; line-height: 1; white-space: nowrap; color: #212529; text-shadow: 0 0 2px #fff, 0 0 3px #fff; }
     .adm-req-overview .adm-req-bar-link { display: block; text-decoration: none; color: inherit; }
     .adm-req-overview .adm-req-track.has-target { outline: 1px solid var(--bs-secondary-color, #6c757d); }
     .adm-req-overview .adm-req-bar-link:hover .adm-req-track { outline: 2px solid var(--bs-primary, #0d6efd); }
@@ -39,15 +40,15 @@
                             <div class="adm-req-fill {if $p.status eq 'fulfilled'}ok{elseif $p.status eq 'overdue' or $p.status eq 'never-fulfilled'}over{elseif $p.status eq 'missing'}miss{else}none{/if}"
                                  style="width: {$p.percent}%;"></div>
                         {/if}
-                    </div>
-                    <div class="adm-req-val">
-                        {if $p.required is not null}
-                            {$p.attained} / {$p.required}{if $p.percent is not null} ({$p.percent}%){/if}
-                        {elseif $p.attained gt 0}
-                            {$p.attained}
-                        {else}
-                            &ndash;
-                        {/if}
+                        <div class="adm-req-val adm-req-val-in">
+                            {if $p.required is not null}
+                                {$p.attained} / {$p.required}{if $p.percent is not null} ({$p.percent}%){/if}
+                            {elseif $p.attained gt 0}
+                                {$p.attained}
+                            {else}
+                                &ndash;
+                            {/if}
+                        </div>
                     </div>
                     {if $p.pending gt 0}
                         <div class="adm-req-pending">{$l10n->get('PLG_REQUIREMENTS_PENDING', [$p.pending])}</div>
