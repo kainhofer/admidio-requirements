@@ -3,6 +3,8 @@
     .adm-req-overview .card-header.collapsed .adm-req-collapse-icon { transform: rotate(-90deg); }
     {* Grouped rows sit one step in from their heading, whichever column happens to come first. *}
     #adm_req_activities_table.adm-req-grouped > tbody > tr:not(.admidio-group-heading) > td:first-child { padding-left: 2rem; }
+    {* Bootstrap paints cells from --bs-table-bg, so the variable is set rather than background-color. *}
+    #adm_req_activities_table > tbody > tr.admidio-group-heading { --bs-table-bg: lightgray; }
 </style>
 
 {if $overview|@count eq 0 and $overviewHint}
