@@ -5,6 +5,7 @@ use Admidio\Infrastructure\Exception;
 use Admidio\Infrastructure\Plugins\Plugin;
 use Admidio\Infrastructure\Utils\FileSystemUtils;
 use Admidio\Infrastructure\Utils\SecurityUtils;
+use Admidio\UI\Component\ListActions;
 use Admidio\UI\Presenter\FormPresenter;
 use Admidio\Users\Entity\User;
 use AdmidioPlugin\Requirements\Entity\Activity;
@@ -639,7 +640,7 @@ class ActivityPresenter extends RequirementsPresenter
             // and the title is what the member typed.
             $title = SecurityUtils::encodeHTML((string) $row['rqa_title']);
             $actions = array();
-            $actions[] = array('url' => $editUrl, 'icon' => 'bi bi-pencil-square', 'tooltip' => $gL10n->get('SYS_EDIT'));
+            $actions[] = array('id' => 'edit', 'url' => $editUrl, 'icon' => 'bi bi-pencil-square', 'tooltip' => $gL10n->get('SYS_EDIT'));
             // A draft only exists under the until_submitted policy, where submitting is what hands
             // the activity over for review - and the only way out of draft for its owner.
             if ($editable && (string) $row['rqa_status'] === 'draft') {
@@ -649,7 +650,8 @@ class ActivityPresenter extends RequirementsPresenter
                     $gL10n->get('PLG_REQUIREMENTS_SUBMIT_CONFIRM', array($title)),
                     'bi bi-send',
                     $gL10n->get('PLG_REQUIREMENTS_SUBMIT'),
-                    'admReqReloadPage'
+                    'admReqReloadPage',
+                    'submit'
                 );
             }
             if ($editable) {
@@ -659,7 +661,8 @@ class ActivityPresenter extends RequirementsPresenter
                     $gL10n->get('SYS_WANT_DELETE_ENTRY', array($title)),
                     'bi bi-trash',
                     $gL10n->get('SYS_DELETE'),
-                    'admReqReloadPage'
+                    'admReqReloadPage',
+                    'delete'
                 );
             }
 
@@ -679,7 +682,7 @@ class ActivityPresenter extends RequirementsPresenter
                 'attendance' => (float) $row['rqa_attendance'] > 0 ? self::formatCredits($row['rqa_attendance']) : '',
                 'certificate' => SecurityUtils::encodeHTML($formatDate($row['rqa_certificate_date'])),
                 'files' => $this->filesCell($filesByActivity[(int) $row['rqa_id']] ?? array()),
-                'actions' => $this->statusIcon($row) . self::actionsHtml($actions)
+                'actions' => $this->statusIcon($row) . self::actionsHtml(ListActions::filter('requirements-activities', $actions, $row))
             );
         }
 
@@ -898,12 +901,15 @@ class ActivityPresenter extends RequirementsPresenter
         foreach ($actions as $action) {
             $icon = '<i class="' . $action['icon'] . '" data-bs-toggle="tooltip" title="'
                 . SecurityUtils::encodeHTML($action['tooltip']) . '"></i>';
-            if (isset($action['dataHref'])) {
-                $html .= '<a class="admidio-icon-link admidio-messagebox" href="javascript:void(0);" data-buttons="yes-no"'
+            // The list_row_actions filter may add actions of any kind, so the id is passed on and an
+            // action without a target is a plain icon.
+            $id = empty($action['id']) ? '' : ' data-action-id="' . SecurityUtils::encodeHTML($action['id']) . '"';
+            if (isset($action['dataHref']) && isset($action['dataMessage'])) {
+                $html .= '<a class="admidio-icon-link admidio-messagebox" href="javascript:void(0);" data-buttons="yes-no"' . $id
                     . ' data-message="' . SecurityUtils::encodeHTML($action['dataMessage']) . '"'
                     . ' data-href="' . SecurityUtils::encodeHTML($action['dataHref']) . '">' . $icon . '</a>';
             } else {
-                $html .= '<a class="admidio-icon-link" href="' . $action['url'] . '">' . $icon . '</a>';
+                $html .= '<a class="admidio-icon-link" href="' . ($action['url'] ?? 'javascript:void(0);') . '"' . $id . '>' . $icon . '</a>';
             }
         }
         return $html;

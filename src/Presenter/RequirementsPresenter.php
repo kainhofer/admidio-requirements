@@ -85,7 +85,7 @@ abstract class RequirementsPresenter extends PagePresenter
     {
         global $gL10n;
 
-        return $this->confirmedPostAction($rowHtmlId, $url, $message, 'bi bi-trash', $gL10n->get('SYS_DELETE'));
+        return $this->confirmedPostAction($rowHtmlId, $url, $message, 'bi bi-trash', $gL10n->get('SYS_DELETE'), '', 'delete');
     }
 
     /**
@@ -95,6 +95,8 @@ abstract class RequirementsPresenter extends PagePresenter
      * Without $jsCallback the row fades out on success, which is what a delete wants. An action that
      * only changes a record - submitting an activity, say - names a global JavaScript function
      * instead, so the row stays and the page can show the new state.
+     *
+     * $id names the action for the list_row_actions filter.
      */
     protected function confirmedPostAction(
         string $rowHtmlId,
@@ -102,11 +104,13 @@ abstract class RequirementsPresenter extends PagePresenter
         string $message,
         string $icon,
         string $tooltip,
-        string $jsCallback = ''
+        string $jsCallback = '',
+        string $id = ''
     ): array {
         global $gCurrentSession;
 
         return array(
+            'id' => $id,
             'dataHref' => 'callUrlHideElement(\'' . $rowHtmlId . '\', \'' . $url . '\', \''
                 . $gCurrentSession->getCsrfToken() . '\''
                 . ($jsCallback === '' ? '' : ', \'' . $jsCallback . '\'') . ')',

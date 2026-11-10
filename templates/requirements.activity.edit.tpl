@@ -139,7 +139,7 @@
                                     <span class="text-muted small">({$file.size})</span>
                                 </span>
                                 {if $file.deleteAction}
-                                    <span>{include 'sys-template-parts/list.functions.tpl' data=['actions' => [$file.deleteAction]]}</span>
+                                    <span>{include 'sys-template-parts/list.functions.tpl' listId='requirements-files' listRow=$file data=['actions' => [$file.deleteAction]]}</span>
                                 {/if}
                             </li>
                         {/foreach}

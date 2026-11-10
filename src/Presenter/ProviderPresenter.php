@@ -63,6 +63,7 @@ class ProviderPresenter extends RequirementsPresenter
             $actions = array();
             if ($editable) {
                 $actions[] = array(
+                    'id' => 'edit',
                     'url' => $editUrl,
                     'icon' => 'bi bi-pencil-square',
                     'tooltip' => $gL10n->get('SYS_EDIT')
@@ -91,6 +92,7 @@ class ProviderPresenter extends RequirementsPresenter
         $this->assignSmartyVariable('headers', $headers);
         $this->assignSmartyVariable('rows', $rows);
         $this->assignSmartyVariable('messageNoData', $gL10n->get('SYS_NO_ENTRIES'));
+        $this->assignSmartyVariable('listId', 'requirements-providers');
         $this->addHtmlByTemplate('requirements.list.tpl');
     }
 

@@ -13,7 +13,8 @@ final class RequirementsPluginManifestTest extends AdmidioTestCase
 
         $this->assertTrue($plugin->isValid(), (string)$plugin->error);
         $this->assertSame('requirements', $plugin->id);
-        $this->assertSame('0.5.0', $plugin->version);
+        // Any semantic version, pre-release included: the number changes with every release and is not what this test guards.
+        $this->assertMatchesRegularExpression('/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/', $plugin->version);
         // Membership, not equality: a page added later is not a regression, and losing one is.
         // The landing page of REQ-DEC-015 is decided by name and not by position - Plugin::getUrl()
         // asks whether index.php is among the pages, and getPages() sorts them - so what has to
