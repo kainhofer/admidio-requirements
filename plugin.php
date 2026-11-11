@@ -53,16 +53,150 @@ ChangelogService::registerCallback('getAreaArray', '', array(
     )
 ));
 
+/*
+ * How the change history names and formats the columns of the requirements tables. A column that is
+ * missing here is shown by its raw database name, so every column that is logged has an entry - the
+ * ones that are not meant to appear (the organization, the ids that say which requirement or which
+ * role a record belongs to) are left out by the entities' getIgnoredLogColumns() instead.
+ *
+ * The REQUIREMENTS_* types are the plugin's own and formatted by the callbacks further down.
+ */
+$requirementsList = static function (array $entries): array {
+    return array_map(static fn(string $key): array => array('text' => $key), $entries);
+};
 ChangelogService::registerCallback('getFieldTranslations', '', array(
+    // Providers
+    'rqp_name' => 'SYS_NAME',
     'rqp_short_name' => 'PLG_REQUIREMENTS_PROVIDER_SHORT_NAME',
-    'rqp_qualified' => 'PLG_REQUIREMENTS_PROVIDER_QUALIFIED',
-    'rqp_public' => 'PLG_REQUIREMENTS_PROVIDER_PUBLIC',
-    'rqa_begin_date' => 'PLG_REQUIREMENTS_BEGIN_DATE',
-    'rqa_certificate_date' => 'PLG_REQUIREMENTS_CERTIFICATE_DATE',
-    'rac_period_reference' => 'PLG_REQUIREMENTS_CREDITED_PERIOD',
-    'rac_credits_claimed' => 'PLG_REQUIREMENTS_CREDITS_CLAIMED',
-    'rac_credits_accepted' => 'PLG_REQUIREMENTS_CREDITS_ACCEPTED'
+    'rqp_address' => 'SYS_ADDRESS',
+    'rqp_url' => array('name' => 'SYS_WEBSITE', 'type' => 'URL'),
+    'rqp_description' => 'SYS_DESCRIPTION',
+    'rqp_qualified' => array('name' => 'PLG_REQUIREMENTS_PROVIDER_QUALIFIED', 'type' => 'BOOL'),
+    'rqp_public' => array('name' => 'PLG_REQUIREMENTS_PROVIDER_PUBLIC', 'type' => 'BOOL'),
+    // Activities
+    'rqa_title' => 'SYS_TITLE',
+    'rqa_description' => 'SYS_DESCRIPTION',
+    'rqa_url' => array('name' => 'SYS_WEBSITE', 'type' => 'URL'),
+    'rqa_location' => 'PLG_REQUIREMENTS_LOCATION',
+    'rqa_provider_id' => array('name' => 'PLG_REQUIREMENTS_PROVIDER', 'type' => 'REQUIREMENTS_PROVIDER'),
+    'rqa_begin_date' => array('name' => 'PLG_REQUIREMENTS_BEGIN_DATE', 'type' => 'DATE'),
+    'rqa_begin_time' => 'PLG_REQUIREMENTS_BEGIN_TIME',
+    'rqa_end_date' => array('name' => 'PLG_REQUIREMENTS_END_DATE', 'type' => 'DATE'),
+    'rqa_end_time' => 'PLG_REQUIREMENTS_END_TIME',
+    'rqa_certificate_date' => array('name' => 'PLG_REQUIREMENTS_CERTIFICATE_DATE', 'type' => 'DATE'),
+    'rqa_attendance' => array('name' => 'PLG_REQUIREMENTS_ATTENDANCE', 'type' => 'REQUIREMENTS_CREDITS'),
+    'rqa_comments' => 'SYS_COMMENT',
+    'rqa_status' => array('name' => 'PLG_REQUIREMENTS_STATUS', 'type' => 'CUSTOM_LIST', 'entries' => $requirementsList(array(
+        'draft' => 'PLG_REQUIREMENTS_STATUS_DRAFT',
+        'submitted' => 'PLG_REQUIREMENTS_STATUS_SUBMITTED',
+        'withdrawn' => 'PLG_REQUIREMENTS_STATUS_WITHDRAWN'
+    ))),
+    'rqa_review_status' => array('name' => 'PLG_REQUIREMENTS_REVIEW_STATUS', 'type' => 'CUSTOM_LIST', 'entries' => $requirementsList(array(
+        'open' => 'PLG_REQUIREMENTS_REVIEW_OPEN',
+        'accepted' => 'PLG_REQUIREMENTS_REVIEW_ACCEPTED',
+        'partially_accepted' => 'PLG_REQUIREMENTS_REVIEW_PARTIALLY_ACCEPTED',
+        'not_accepted' => 'PLG_REQUIREMENTS_REVIEW_NOT_ACCEPTED',
+        'clarification' => 'PLG_REQUIREMENTS_REVIEW_CLARIFICATION'
+    ))),
+    'rqa_review_comments' => 'PLG_REQUIREMENTS_REVIEW_COMMENTS',
+    // Requirement types
+    'rqt_name' => 'SYS_NAME',
+    'rqt_short_name' => 'PLG_REQUIREMENTS_SHORT_NAME',
+    'rqt_description' => 'SYS_DESCRIPTION',
+    'rqt_parent_id' => array('name' => 'PLG_REQUIREMENTS_PARENT_REQUIREMENT', 'type' => 'REQUIREMENTS_TYPE'),
+    'rqt_period_unit' => array('name' => 'PLG_REQUIREMENTS_PERIOD_UNIT', 'type' => 'CUSTOM_LIST', 'entries' => $requirementsList(array(
+        'year' => 'PLG_REQUIREMENTS_PERIOD_YEAR',
+        'quarter' => 'PLG_REQUIREMENTS_PERIOD_QUARTER',
+        'month' => 'PLG_REQUIREMENTS_PERIOD_MONTH',
+        'week' => 'PLG_REQUIREMENTS_PERIOD_WEEK'
+    ))),
+    'rqt_period_count' => 'PLG_REQUIREMENTS_PERIOD_COUNT',
+    'rqt_period_anchor' => array('name' => 'PLG_REQUIREMENTS_PERIOD_ANCHOR', 'type' => 'CUSTOM_LIST', 'entries' => $requirementsList(array(
+        'calendar' => 'PLG_REQUIREMENTS_ANCHOR_CALENDAR',
+        'last_fulfilment' => 'PLG_REQUIREMENTS_ANCHOR_LAST_FULFILMENT'
+    ))),
+    'rqt_multiple_roles_mode' => array('name' => 'PLG_REQUIREMENTS_MULTIPLE_ROLES_MODE', 'type' => 'CUSTOM_LIST', 'entries' => $requirementsList(array(
+        'maximum' => 'PLG_REQUIREMENTS_MULTIPLE_ROLES_MAXIMUM',
+        'minimum' => 'PLG_REQUIREMENTS_MULTIPLE_ROLES_MINIMUM',
+        'sum' => 'PLG_REQUIREMENTS_MULTIPLE_ROLES_SUM'
+    ))),
+    'rqt_active' => array('name' => 'PLG_REQUIREMENTS_ACTIVE', 'type' => 'BOOL'),
+    'rqt_sequence' => 'SYS_ORDER',
+    // Role rules
+    'rrr_required_credits' => array('name' => 'PLG_REQUIREMENTS_REQUIRED_CREDITS', 'type' => 'REQUIREMENTS_CREDITS'),
+    'rrr_partial_period_mode' => array('name' => 'PLG_REQUIREMENTS_PARTIAL_PERIOD_MODE', 'type' => 'CUSTOM_LIST', 'entries' => $requirementsList(array(
+        'full' => 'PLG_REQUIREMENTS_PARTIAL_FULL',
+        'pro_rata' => 'PLG_REQUIREMENTS_PARTIAL_PRO_RATA'
+    ))),
+    'rrr_proration_basis' => array('name' => 'PLG_REQUIREMENTS_PRORATION_BASIS', 'type' => 'CUSTOM_LIST', 'entries' => $requirementsList(array(
+        'month' => 'PLG_REQUIREMENTS_PRORATION_MONTH',
+        'day' => 'PLG_REQUIREMENTS_PRORATION_DAY',
+        'week' => 'PLG_REQUIREMENTS_PRORATION_WEEK'
+    ))),
+    'rrr_membership_at_period_start' => array('name' => 'PLG_REQUIREMENTS_MEMBERSHIP_AT_PERIOD_START', 'type' => 'BOOL'),
+    'rrr_valid_from' => array('name' => 'PLG_REQUIREMENTS_VALID_FROM', 'type' => 'DATE'),
+    'rrr_valid_until' => array('name' => 'PLG_REQUIREMENTS_VALID_UNTIL', 'type' => 'DATE'),
+    // Credits
+    'rac_period_reference' => array('name' => 'PLG_REQUIREMENTS_CREDITED_PERIOD', 'type' => 'DATE'),
+    'rac_credits_claimed' => array('name' => 'PLG_REQUIREMENTS_CREDITS_CLAIMED', 'type' => 'REQUIREMENTS_CREDITS'),
+    'rac_credits_accepted' => array('name' => 'PLG_REQUIREMENTS_CREDITS_ACCEPTED', 'type' => 'REQUIREMENTS_CREDITS'),
+    // Certificates
+    'raf_name' => 'SYS_NAME',
+    'raf_mime_type' => 'SYS_FILE_TYPE',
+    'raf_size' => array('name' => 'SYS_SIZE', 'type' => 'REQUIREMENTS_BYTES')
 ));
+
+/*
+ * The value types of those columns. A value reaches these callbacks already encoded for HTML, and what
+ * they return is HTML as well.
+ */
+// A requirement or a provider named by its id is shown by its name and linked to its page; one that
+// does not exist any more (or never belonged to this organization) is left as the plain id.
+ChangelogService::registerCallback('formatValue', 'REQUIREMENTS_TYPE', static function ($value): string {
+    global $gDb;
+
+    $type = new RequirementType($gDb, (int) $value);
+    return (int) $type->getValue('rqt_id') === 0 ? (string) $value : ChangelogService::createLink(
+        $type->readableName(),
+        'req_requirement_types',
+        (int) $type->getValue('rqt_id'),
+        (string) $type->getValue('rqt_uuid')
+    );
+});
+ChangelogService::registerCallback('formatValue', 'REQUIREMENTS_PROVIDER', static function ($value): string {
+    global $gDb;
+
+    $provider = new Provider($gDb, (int) $value);
+    return (int) $provider->getValue('rqp_id') === 0 ? (string) $value : ChangelogService::createLink(
+        $provider->readableName(),
+        'req_providers',
+        (int) $provider->getValue('rqp_id'),
+        (string) $provider->getValue('rqp_uuid')
+    );
+});
+// "6.00" and "6" are the same number, and the history should not make the reader wonder: no trailing
+// zeros, at most two decimals.
+ChangelogService::registerCallback('formatValue', 'REQUIREMENTS_CREDITS', static function ($value): string {
+    return is_numeric($value) ? rtrim(rtrim(number_format((float) $value, 2, '.', ''), '0'), '.') : (string) $value;
+});
+ChangelogService::registerCallback('formatValue', 'REQUIREMENTS_BYTES', static function ($value): string {
+    return is_numeric($value) ? \Admidio\Infrastructure\Utils\FileSystemUtils::getHumanReadableBytes((int) $value) : (string) $value;
+});
+
+// The related object of an entry: the member of an activity, the requirement a credit counts towards,
+// the role a rule applies to, and the activity a certificate belongs to.
+foreach (array(
+    'req_activities' => 'users',
+    'req_activity_credits' => 'req_requirement_types',
+    'req_requirement_role_rules' => 'roles',
+    'req_activity_files' => 'req_activities'
+) as $requirementsTable => $requirementsRelated) {
+    ChangelogService::registerCallback(
+        'getRelatedTable',
+        $requirementsTable,
+        static fn(): string => $requirementsRelated
+    );
+}
 
 // The changelog hands these callbacks nothing but the table name and reads the record by id or UUID
 // afterwards, so the organization check cannot live here. It lives in the entities themselves, which
@@ -120,9 +254,8 @@ ChangelogService::registerCallback(
  * Where a changelog row points. Without this the record name in the change history is plain text,
  * so an administrator reading "who changed what" has no way back to the thing that was changed.
  *
- * A rule and a credit have no page of their own - they are edited inside their requirement type and
- * their activity - so they link to the page that owns them. The rule needs its requirement type
- * looked up for that, which is why it is the one callback that reads.
+ * A credit and a certificate have no page of their own - they are edited inside their activity - so
+ * they link to the page that owns them.
  */
 ChangelogService::registerCallback(
     'createLink',
@@ -168,53 +301,22 @@ ChangelogService::registerCallback(
         );
     }
 );
-ChangelogService::registerCallback(
-    'createLink',
-    'req_activity_credits',
-    static function (string $text, string $module, int|string $id, string $uuid = ''): string {
-        global $gDb;
-
-        // A credit is edited on its activity, so the link needs the activity the credit belongs to.
-        $credit = new ActivityCredit($gDb, (int) $id);
-        if ((int) $credit->getValue('rac_id') === 0) {
-            return '';
+// A credit and a certificate are edited on their activity, and their entries carry the activity's UUID
+// as their own (see ActivityCredit::adjustLogEntry() and ActivityFile::adjustLogEntry()), so the link
+// needs no lookup - and works for a credit or certificate that has been deleted since.
+foreach (array('req_activity_credits', 'req_activity_files') as $requirementsTable) {
+    ChangelogService::registerCallback(
+        'createLink',
+        $requirementsTable,
+        static function (string $text, string $module, int|string $id, string $uuid = ''): string {
+            $plugin = PluginRegistry::get(RequirementsPlugin::ID);
+            return $plugin === null || $uuid === '' ? '' : SecurityUtils::encodeUrl(
+                $plugin->getUrl('index.php'),
+                array('mode' => 'edit', 'uuid' => $uuid)
+            );
         }
-        $activity = new Activity($gDb, (int) $credit->getValue('rac_activity_id'));
-        $plugin = PluginRegistry::get(RequirementsPlugin::ID);
-        if ($plugin === null || (int) $activity->getValue('rqa_id') === 0) {
-            return '';
-        }
-
-        return SecurityUtils::encodeUrl(
-            $plugin->getUrl('index.php'),
-            array('mode' => 'edit', 'uuid' => $activity->getValue('rqa_uuid'))
-        );
-    }
-);
-
-ChangelogService::registerCallback(
-    'createLink',
-    'req_activity_files',
-    static function (string $text, string $module, int|string $id, string $uuid = ''): string {
-        global $gDb;
-
-        // A certificate is managed on its activity, so the link needs the activity it belongs to.
-        $file = new ActivityFile($gDb, (int) $id);
-        if ((int) $file->getValue('raf_id') === 0) {
-            return '';
-        }
-        $activity = new Activity($gDb, (int) $file->getValue('raf_activity_id'));
-        $plugin = PluginRegistry::get(RequirementsPlugin::ID);
-        if ($plugin === null || (int) $activity->getValue('rqa_id') === 0) {
-            return '';
-        }
-
-        return SecurityUtils::encodeUrl(
-            $plugin->getUrl('index.php'),
-            array('mode' => 'edit', 'uuid' => $activity->getValue('rqa_uuid'))
-        );
-    }
-);
+    );
+}
 
 // The requirements right, not the generic organization-administrator flag: a site that delegates
 // requirements administration through the component right would otherwise be denied its own change

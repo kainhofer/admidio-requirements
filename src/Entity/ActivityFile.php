@@ -1,6 +1,7 @@
 <?php
 namespace AdmidioPlugin\Requirements\Entity;
 
+use Admidio\Changelog\Entity\LogChanges;
 use Admidio\Infrastructure\Database;
 use Admidio\Infrastructure\Entity\Entity;
 use AdmidioPlugin\Requirements\Database\RequirementsTables;
@@ -19,6 +20,7 @@ use AdmidioPlugin\Requirements\Database\RequirementsTables;
 final class ActivityFile extends Entity
 {
     use OrganizationScope;
+    use Loggable;
 
     public function __construct(Database $database, int|string $id = '')
     {
@@ -37,6 +39,30 @@ final class ActivityFile extends Entity
     public function getHookId(): ?string
     {
         return 'requirements_activity_file';
+    }
+
+    protected function isPrivateRecord(): bool
+    {
+        return false;
+    }
+
+    public function getIgnoredLogColumns(): array
+    {
+        return array_merge(parent::getIgnoredLogColumns(), array('raf_activity_id'));
+    }
+
+    /**
+     * A file has no page of its own: the entry links to its activity, which is also its related object.
+     */
+    protected function adjustLogEntry(LogChanges $logEntry): void
+    {
+        $activity = new Activity($this->db, (int) $this->getValue('raf_activity_id'));
+        if ((int) $activity->getValue('rqa_id') === 0) {
+            return;
+        }
+        $logEntry->setValue('log_record_uuid', (string) $activity->getValue('rqa_uuid'));
+        $logEntry->setLogLinkID((int) $activity->getValue('rqa_id'));
+        $logEntry->setLogRelated((string) $activity->getValue('rqa_uuid'), $activity->readableName());
     }
 
     /**

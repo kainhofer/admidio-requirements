@@ -56,17 +56,9 @@ final class Provider extends Entity
         return $this->isEditable();
     }
 
-    public function getFieldTitle(string $field): string
+    public function getIgnoredLogColumns(): array
     {
-        return match ($field) {
-            'rqp_name' => 'SYS_NAME',
-            'rqp_short_name' => 'PLG_REQUIREMENTS_PROVIDER_SHORT_NAME',
-            'rqp_address' => 'SYS_ADDRESS',
-            'rqp_url' => 'SYS_WEBSITE',
-            'rqp_description' => 'SYS_DESCRIPTION',
-            'rqp_qualified' => 'PLG_REQUIREMENTS_PROVIDER_QUALIFIED',
-            'rqp_public' => 'PLG_REQUIREMENTS_PROVIDER_PUBLIC',
-            default => parent::getFieldTitle($field)
-        };
+        return array_merge(parent::getIgnoredLogColumns(), array('rqp_org_id'));
     }
+
 }

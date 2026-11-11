@@ -14,6 +14,7 @@
   <string name="PLG_REQUIREMENTS_ANCHOR_LAST_FULFILMENT">Recurring after the last fulfilment</string>
   <string name="PLG_REQUIREMENTS_ATTENDANCE">Attendance hours</string>
   <string name="PLG_REQUIREMENTS_BEGIN_DATE">Begin date</string>
+  <string name="PLG_REQUIREMENTS_BEGIN_TIME">Begin time</string>
   <string name="PLG_REQUIREMENTS_CERTIFICATE_DATE">Certificate date</string>
   <string name="PLG_REQUIREMENTS_CERTIFICATE_DATE_HELP">Optional date shown on the certificate, for example the examination date.</string>
   <string name="PLG_REQUIREMENTS_CLEAR_FILTERS">Clear filters</string>
@@ -40,6 +41,7 @@
   <string name="PLG_REQUIREMENTS_EDIT_POLICY_DESC">Controls whether submitting an activity locks it against later member changes. Administrators can still review and correct records.</string>
   <string name="PLG_REQUIREMENTS_EDIT_POLICY_UNTIL_SUBMITTED">Members may edit and delete only draft activities</string>
   <string name="PLG_REQUIREMENTS_END_DATE">End date</string>
+  <string name="PLG_REQUIREMENTS_END_TIME">End time</string>
   <string name="PLG_REQUIREMENTS_EXPORT">Export</string>
   <string name="PLG_REQUIREMENTS_EXPORT_PDF">PDF with certificates</string>
   <string name="PLG_REQUIREMENTS_EXPORT_SPREADSHEET">Spreadsheet (Excel)</string>

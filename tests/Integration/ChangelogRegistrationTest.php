@@ -186,72 +186,28 @@ final class ChangelogRegistrationTest extends RequirementsDatabaseTestCase
     }
 
     /**
-     * A credit has no page of its own; it is edited on its activity, so that is where it links.
+     * A credit and a certificate have no page of their own; they are edited on their activity, and their
+     * entries carry the activity's UUID, so that is where they link - without any lookup, which is also
+     * why the link survives a credit or certificate that has been deleted since.
      */
-    public function testACreditLinksToTheActivityItBelongsTo(): void
+    public function testACreditAndACertificateLinkToTheirActivity(): void
     {
-        global $gCurrentOrgId, $gCurrentUserId;
+        foreach (array('req_activity_credits', 'req_activity_files') as $table) {
+            $link = ChangelogService::createLink('Name', $table, 1, 'eeeeeeee-0000-0000-0000-000000000002');
 
-        $db = $this->getDatabase();
-        $db->queryPrepared(
-            'INSERT INTO ' . RequirementsTables::activities()
-            . ' (rqa_uuid, rqa_org_id, rqa_user_id, rqa_title, rqa_begin_date) VALUES (?, ?, ?, ?, ?)',
-            array(
-                'eeeeeeee-0000-0000-0000-000000000002', (int) $gCurrentOrgId, (int) $gCurrentUserId,
-                'Linked course', '2026-03-01'
-            )
-        );
-        $activityId = (int) $db->queryPrepared(
-            'SELECT rqa_id FROM ' . RequirementsTables::activities() . ' WHERE rqa_uuid = ?',
-            array('eeeeeeee-0000-0000-0000-000000000002')
-        )->fetchColumn();
-
-        $db->queryPrepared(
-            'INSERT INTO ' . RequirementsTables::requirementTypes()
-            . ' (rqt_uuid, rqt_org_id, rqt_name, rqt_period_unit) VALUES (?, ?, ?, ?)',
-            array('eeeeeeee-0000-0000-0000-000000000003', (int) $gCurrentOrgId, 'Linked CPD', 'year')
-        );
-        $typeId = (int) $db->queryPrepared(
-            'SELECT rqt_id FROM ' . RequirementsTables::requirementTypes() . ' WHERE rqt_uuid = ?',
-            array('eeeeeeee-0000-0000-0000-000000000003')
-        )->fetchColumn();
-
-        $db->queryPrepared(
-            'INSERT INTO ' . RequirementsTables::activityCredits()
-            . ' (rac_uuid, rac_activity_id, rac_requirement_type_id, rac_period_reference, rac_credits_claimed)'
-            . ' VALUES (?, ?, ?, ?, ?)',
-            array('eeeeeeee-0000-0000-0000-000000000004', $activityId, $typeId, '2026-01-01', '5.00')
-        );
-        $creditId = (int) $db->queryPrepared(
-            'SELECT rac_id FROM ' . RequirementsTables::activityCredits() . ' WHERE rac_uuid = ?',
-            array('eeeeeeee-0000-0000-0000-000000000004')
-        )->fetchColumn();
-
-        $link = ChangelogService::createLink(
-            'Credit',
-            'req_activity_credits',
-            $creditId,
-            'eeeeeeee-0000-0000-0000-000000000004'
-        );
-
-        $this->assertStringContainsString('<a href="', $link);
-        $this->assertStringContainsString('index.php', $link);
-        $this->assertStringContainsString('eeeeeeee-0000-0000-0000-000000000002', $link, 'the activity UUID');
+            $this->assertStringContainsString('<a href="', $link, $table);
+            $this->assertStringContainsString('index.php', $link, $table);
+            $this->assertStringContainsString('eeeeeeee-0000-0000-0000-000000000002', $link, $table);
+        }
     }
 
     /**
-     * A credit whose activity is gone - or belongs to another organisation, which reads the same
-     * way - has nowhere to point. `createLink()` renders the plain name in that case rather than an
-     * anchor, which is what a callback returning an empty URL is for.
+     * An entry without an activity UUID has nowhere to point. `createLink()` renders the plain name in
+     * that case rather than an anchor, which is what a callback returning an empty URL is for.
      */
-    public function testACreditWithNoReachableActivityIsNotLinked(): void
+    public function testAnEntryWithoutAnActivityIsNotLinked(): void
     {
-        $rendered = ChangelogService::createLink(
-            'Credit',
-            'req_activity_credits',
-            999999,
-            'eeeeeeee-dead-0000-0000-000000000000'
-        );
+        $rendered = ChangelogService::createLink('Credit', 'req_activity_credits', 999999, '');
 
         $this->assertSame('Credit', $rendered);
         $this->assertStringNotContainsString('<a ', $rendered);

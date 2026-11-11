@@ -14,6 +14,7 @@
   <string name="PLG_REQUIREMENTS_ANCHOR_LAST_FULFILMENT">Wiederkehrend ab der letzten Erfüllung</string>
   <string name="PLG_REQUIREMENTS_ATTENDANCE">Anwesenheitsstunden</string>
   <string name="PLG_REQUIREMENTS_BEGIN_DATE">Beginndatum</string>
+  <string name="PLG_REQUIREMENTS_BEGIN_TIME">Beginn (Uhrzeit)</string>
   <string name="PLG_REQUIREMENTS_CERTIFICATE_DATE">Zertifikatsdatum</string>
   <string name="PLG_REQUIREMENTS_CERTIFICATE_DATE_HELP">Optionales Datum auf dem Zertifikat, z. B. das Prüfungsdatum.</string>
   <string name="PLG_REQUIREMENTS_CLEAR_FILTERS">Filter zurücksetzen</string>
@@ -40,6 +41,7 @@
   <string name="PLG_REQUIREMENTS_EDIT_POLICY_DESC">Legt fest, ob das Einreichen einer Aktivität sie gegen spätere Änderungen durch das Mitglied sperrt. Administratoren können Einträge weiterhin prüfen und korrigieren.</string>
   <string name="PLG_REQUIREMENTS_EDIT_POLICY_UNTIL_SUBMITTED">Mitglieder dürfen nur Entwürfe bearbeiten und löschen</string>
   <string name="PLG_REQUIREMENTS_END_DATE">Enddatum</string>
+  <string name="PLG_REQUIREMENTS_END_TIME">Ende (Uhrzeit)</string>
   <string name="PLG_REQUIREMENTS_EXPORT">Exportieren</string>
   <string name="PLG_REQUIREMENTS_EXPORT_PDF">PDF mit Zertifikaten</string>
   <string name="PLG_REQUIREMENTS_EXPORT_SPREADSHEET">Tabelle (Excel)</string>
