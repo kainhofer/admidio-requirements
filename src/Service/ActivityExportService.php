@@ -53,6 +53,155 @@ final class ActivityExportService
     }
 
     /**
+     * The same list as one PDF: a table of everything the activities hold, then their certificates.
+     *
+     * @param array<string,mixed> $filter the filter of ActivityService::findActivityRows()
+     * @return string the PDF
+     * @throws Exception
+     */
+    public function pdf(array $filter, string $heading): string
+    {
+        global $gL10n, $gSettingsManager;
+
+        $admin = Component::isAdministrable(RequirementsPlugin::ID);
+        $listed = (new ActivityService($this->db))->findActivityRows($filter, '', array(array('date', 'desc')));
+        $activityIds = array_values(array_unique(array_map('intval', array_column($listed['rows'], 'rqa_id'))));
+
+        $activities = array();
+        $credits = array();
+        $files = array();
+        $filesEnabled = ActivityFileService::isEnabled();
+        $fileService = new ActivityFileService($this->db);
+        foreach (array_chunk($activityIds, self::CHUNK) as $chunk) {
+            if ($filesEnabled) {
+                $files += $fileService->listForActivities($chunk);
+            }
+            foreach ($this->activities($chunk) as $row) {
+                $activities[(int) $row['rqa_id']] = $row;
+            }
+            foreach ($this->credits($chunk) as $row) {
+                $credits[(int) $row['rac_activity_id']][] = $row;
+            }
+        }
+
+        $format = $gSettingsManager->getString('system_date');
+        $date = static fn(?string $value): string => $value === null || $value === ''
+            ? '' : \DateTimeImmutable::createFromFormat('!Y-m-d', $value)->format($format);
+        $time = static fn(?string $value): string => substr((string) $value, 0, 5);
+        $number = static fn(mixed $value): string => rtrim(rtrim(number_format((float) $value, 2, '.', ''), '0'), '.');
+        $statusKeys = array(
+            'draft' => 'PLG_REQUIREMENTS_STATUS_DRAFT',
+            'submitted' => 'PLG_REQUIREMENTS_STATUS_SUBMITTED',
+            'withdrawn' => 'PLG_REQUIREMENTS_STATUS_WITHDRAWN'
+        );
+
+        $columns = array();
+        if ($admin) {
+            $columns[] = array('key' => 'member', 'label' => $gL10n->get('SYS_MEMBER'));
+        }
+        array_push(
+            $columns,
+            array('key' => 'date', 'label' => $gL10n->get('SYS_DATE')),
+            array('key' => 'title', 'label' => $gL10n->get('SYS_TITLE')),
+            array('key' => 'provider', 'label' => $gL10n->get('PLG_REQUIREMENTS_PROVIDER')),
+            array('key' => 'credits', 'label' => $gL10n->get('PLG_REQUIREMENTS_CREDITS')),
+            array('key' => 'details', 'label' => $gL10n->get('SYS_DESCRIPTION')),
+            array('key' => 'status', 'label' => $gL10n->get('PLG_REQUIREMENTS_STATUS'))
+        );
+        if ($filesEnabled) {
+            $columns[] = array('key' => 'files', 'label' => $gL10n->get('PLG_REQUIREMENTS_FILES'));
+        }
+
+        $rows = array();
+        foreach ($activityIds as $activityId) {
+            if (!isset($activities[$activityId])) {
+                continue;
+            }
+            $a = $activities[$activityId];
+
+            $when = $date($a['rqa_begin_date']) . ' ' . $time($a['rqa_begin_time']);
+            if ($a['rqa_end_date'] !== null && $a['rqa_end_date'] !== $a['rqa_begin_date']) {
+                $when .= "\n– " . $date($a['rqa_end_date']) . ' ' . $time($a['rqa_end_time']);
+            } elseif ($time($a['rqa_end_time']) !== '') {
+                $when .= '–' . $time($a['rqa_end_time']);
+            }
+
+            $creditLines = array();
+            foreach ($credits[$activityId] ?? array() as $credit) {
+                $kind = FulfilmentService::periodControlKindFor(
+                    (string) $credit['rqt_period_anchor'],
+                    (string) $credit['rqt_period_unit']
+                );
+                $period = FulfilmentService::periodControlValue($kind, (string) $credit['rac_period_reference']);
+                $line = ((string) $credit['rqt_short_name'] !== '' ? $credit['rqt_short_name'] : $credit['rqt_name'])
+                    . ' (' . ($period['quarter'] !== '' ? $period['value'] . ' Q' . $period['quarter'] : $period['value']) . '): '
+                    . $number($credit['rac_credits_claimed']);
+                if ($credit['rac_credits_accepted'] !== null
+                    && (float) $credit['rac_credits_accepted'] !== (float) $credit['rac_credits_claimed']) {
+                    $line .= ' → ' . $number($credit['rac_credits_accepted']);
+                }
+                $creditLines[] = $line;
+            }
+            if ((float) $a['rqa_attendance'] > 0) {
+                $creditLines[] = $gL10n->get('PLG_REQUIREMENTS_ATTENDANCE') . ': ' . $number($a['rqa_attendance']);
+            }
+
+            $details = array();
+            foreach (array(
+                $gL10n->get('PLG_REQUIREMENTS_LOCATION') => (string) $a['rqa_location'],
+                $gL10n->get('SYS_URL') => (string) $a['rqa_url'],
+                $gL10n->get('PLG_REQUIREMENTS_CERTIFICATE_DATE') => $date($a['rqa_certificate_date']),
+                $gL10n->get('SYS_DESCRIPTION') => (string) $a['rqa_description'],
+                $gL10n->get('SYS_COMMENT') => (string) $a['rqa_comments']
+            ) as $label => $value) {
+                if (trim($value) !== '') {
+                    $details[] = $label . ': ' . trim($value);
+                }
+            }
+
+            $certificates = array();
+            $entity = new Activity($this->db);
+            $entity->setArray($a);
+            foreach ($files[$activityId] ?? array() as $file) {
+                $stored = new ActivityFile($this->db);
+                $stored->setArray($file);
+                $path = $fileService->pathFor($stored, $entity);
+                if (is_file($path)) {
+                    $certificates[] = array('name' => (string) $file['raf_name'], 'path' => $path, 'mime' => (string) $file['raf_mime_type']);
+                }
+            }
+
+            $provider = (string) ($a['rqa_provider_short_name'] ?? '') !== ''
+                ? $a['rqa_provider_short_name'] : (string) $a['rqa_provider_name'];
+            $cells = array();
+            if ($admin) {
+                $cells[] = trim($a['last_name'] . ', ' . $a['first_name'], ', ');
+            }
+            array_push(
+                $cells,
+                trim($when),
+                (string) $a['rqa_title'],
+                (string) $provider,
+                implode("\n", $creditLines),
+                implode("\n", $details),
+                $gL10n->get($statusKeys[(string) $a['rqa_status']] ?? 'PLG_REQUIREMENTS_STATUS')
+            );
+            if ($filesEnabled) {
+                $cells[] = implode("\n", array_column($certificates, 'name'));
+            }
+            $rows[] = array('cells' => $cells, 'certificates' => $certificates);
+        }
+
+        return ActivityPdfBuilder::build(
+            $heading,
+            $columns,
+            $rows,
+            $gL10n->get('PLG_REQUIREMENTS_FILES'),
+            $gL10n->getLanguageIsoCode()
+        );
+    }
+
+    /**
      * The same list with its certificates, written as a ZIP to $zipPath.
      *
      * @param array<string,mixed> $filter the filter of ActivityService::findActivityRows()

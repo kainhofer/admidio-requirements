@@ -5,7 +5,7 @@
  * activity edit form.
  *
  * Parameters:
- * mode        : list (default) | data | export | edit | save | submit | delete
+ * mode        : list (default) | data | export | edit | save | submit | delete | file-upload
  * uuid        : UUID of the activity for edit / save / delete
  * query       : free-text filter for the activity list
  * requirement : UUID of the requirement type whose credits the list shows
@@ -15,10 +15,11 @@
  * user        : UUID of the member the list is narrowed to; administrators only
  *
  * mode=data is the server-side DataTables endpoint of the activity table. Besides the DataTables
- * parameters (draw, start, length, order, columns) it takes the filter bar: provider (UUID), from,
- * to (dates), group (period | requirement | provider | begin | end | certificate) and granularity
+ * parameters (draw, start, length, order, columns) it takes the filter bar: provider (UUID), year_from,
+ * year_to (credited calendar years), group (period | requirement | provider | begin | end | certificate) and granularity
  * (year | quarter | month) for the date groups. mode=export takes the same filters and sends the
- * list as an Excel file in the importer's layout, with certificates=1 as a ZIP of that file and the
+ * list as an Excel file in the importer's layout, with format=pdf as one PDF (table and certificates),
+ * with certificates=1 as a ZIP of that file and the
  * certificates, which the import wizard reads back.
  *
  * @copyright Reinhold Kainhofer
@@ -44,7 +45,7 @@ try {
 
     $getMode = admFuncVariableIsValid($_GET, 'mode', 'string', array(
         'defaultValue' => 'list',
-        'validValues' => array('list', 'data', 'export', 'edit', 'save', 'submit', 'delete', 'file-delete')
+        'validValues' => array('list', 'data', 'export', 'edit', 'save', 'submit', 'delete', 'file-delete', 'file-upload')
     ));
     // No defaultValue here: admFuncVariableIsValid() only returns early for a missing parameter
     // when none is set, otherwise it would validate the empty string against the datatype.
@@ -80,8 +81,8 @@ try {
                 'user' => $getUser,
                 'query' => $getQuery,
                 'provider' => admFuncVariableIsValid($_GET, 'provider', 'uuid'),
-                'from' => admFuncVariableIsValid($_GET, 'from', 'date'),
-                'to' => admFuncVariableIsValid($_GET, 'to', 'date'),
+                'yearFrom' => admFuncVariableIsValid($_GET, 'year_from', 'int'),
+                'yearTo' => admFuncVariableIsValid($_GET, 'year_to', 'int'),
                 'group' => admFuncVariableIsValid($_GET, 'group', 'string', array(
                     'validValues' => array('', 'period', 'requirement', 'provider', 'begin', 'end', 'certificate')
                 )),
@@ -93,7 +94,11 @@ try {
             if ($getMode === 'export') {
                 (new ActivityPresenter())->export(
                     $filters,
-                    admFuncVariableIsValid($_GET, 'certificates', 'bool')
+                    admFuncVariableIsValid($_GET, 'certificates', 'bool'),
+                    admFuncVariableIsValid($_GET, 'format', 'string', array(
+                        'defaultValue' => 'xlsx',
+                        'validValues' => array('xlsx', 'pdf')
+                    ))
                 );
                 break;
             }
@@ -254,6 +259,23 @@ try {
             echo json_encode(array('status' => 'success'));
             break;
 
+        case 'file-upload':
+            // Certificates dropped onto the files cell of the activity list.
+            SecurityUtils::validateCsrfToken($_POST['adm_csrf_token']);
+
+            $activity = new Activity($gDb);
+            $activity->readDataByUuid($getUuid);
+            if ((int) $activity->getValue('rqa_id') === 0) {
+                throw new Exception('SYS_INVALID_PAGE_VIEW');
+            }
+            // add() itself checks that the feature is on and that the activity is editable.
+            $fileService = new ActivityFileService($gDb);
+            foreach (ActivityFileService::uploadsFrom($_FILES['userfile'] ?? array()) as $upload) {
+                $fileService->add($activity, $upload);
+            }
+            echo json_encode(array('status' => 'success'));
+            break;
+
         case 'file-delete':
             SecurityUtils::validateCsrfToken($_POST['adm_csrf_token']);
 
@@ -269,5 +291,5 @@ try {
             break;
     }
 } catch (Throwable $e) {
-    handleException($e, in_array($getMode ?? '', array('data', 'save', 'submit', 'delete', 'file-delete')));
+    handleException($e, in_array($getMode ?? '', array('data', 'save', 'submit', 'delete', 'file-delete', 'file-upload')));
 }

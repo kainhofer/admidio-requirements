@@ -16,6 +16,7 @@
   <string name="PLG_REQUIREMENTS_BEGIN_DATE">Begin date</string>
   <string name="PLG_REQUIREMENTS_CERTIFICATE_DATE">Certificate date</string>
   <string name="PLG_REQUIREMENTS_CERTIFICATE_DATE_HELP">Optional date shown on the certificate, for example the examination date.</string>
+  <string name="PLG_REQUIREMENTS_CLEAR_FILTERS">Clear filters</string>
   <string name="PLG_REQUIREMENTS_COLUMNS">Columns</string>
   <string name="PLG_REQUIREMENTS_CONTRIBUTIONS_OF">Only the activities of #VAR1# are shown.</string>
   <string name="PLG_REQUIREMENTS_CONTRIBUTIONS_TO">Only the activities credited to #VAR1# are shown.</string>
@@ -32,15 +33,15 @@
   <string name="PLG_REQUIREMENTS_CREDITS">Credits</string>
   <string name="PLG_REQUIREMENTS_CREDITS_ACCEPTED">Accepted credits</string>
   <string name="PLG_REQUIREMENTS_CREDITS_CLAIMED">Claimed credits</string>
-  <string name="PLG_REQUIREMENTS_DATE_FROM">From</string>
-  <string name="PLG_REQUIREMENTS_DATE_UNTIL">Until</string>
   <string name="PLG_REQUIREMENTS_DESCRIPTION">Tracks member activities and recurring training, certification, continuing-education, and similar requirements.</string>
+  <string name="PLG_REQUIREMENTS_DETAILS">Details</string>
   <string name="PLG_REQUIREMENTS_EDIT_POLICY">Member activity editing</string>
   <string name="PLG_REQUIREMENTS_EDIT_POLICY_ALWAYS">Members may always edit and delete their own activities</string>
   <string name="PLG_REQUIREMENTS_EDIT_POLICY_DESC">Controls whether submitting an activity locks it against later member changes. Administrators can still review and correct records.</string>
   <string name="PLG_REQUIREMENTS_EDIT_POLICY_UNTIL_SUBMITTED">Members may edit and delete only draft activities</string>
   <string name="PLG_REQUIREMENTS_END_DATE">End date</string>
   <string name="PLG_REQUIREMENTS_EXPORT">Export</string>
+  <string name="PLG_REQUIREMENTS_EXPORT_PDF">PDF with certificates</string>
   <string name="PLG_REQUIREMENTS_EXPORT_SPREADSHEET">Spreadsheet (Excel)</string>
   <string name="PLG_REQUIREMENTS_EXPORT_WITH_CERTIFICATES">Spreadsheet with certificates (ZIP)</string>
   <string name="PLG_REQUIREMENTS_FILES">Certificates</string>
@@ -155,10 +156,12 @@
   <string name="PLG_REQUIREMENTS_PERIOD_CALENDAR_YEAR">Calendar year</string>
   <string name="PLG_REQUIREMENTS_PERIOD_COUNT">Period count</string>
   <string name="PLG_REQUIREMENTS_PERIOD_COUNT_HELP">Number of period units. Calendar periods currently support the value 1 only.</string>
+  <string name="PLG_REQUIREMENTS_PERIOD_FROM">Period from</string>
   <string name="PLG_REQUIREMENTS_PERIOD_MONTH">Month</string>
   <string name="PLG_REQUIREMENTS_PERIOD_OF_PARENT">as the requirement above</string>
   <string name="PLG_REQUIREMENTS_PERIOD_QUARTER">Quarter</string>
   <string name="PLG_REQUIREMENTS_PERIOD_RECURRING">Every #VAR1#, from the last fulfilment</string>
+  <string name="PLG_REQUIREMENTS_PERIOD_TO">Period to</string>
   <string name="PLG_REQUIREMENTS_PERIOD_UNIT">Period unit</string>
   <string name="PLG_REQUIREMENTS_PERIOD_WEEK">Week</string>
   <string name="PLG_REQUIREMENTS_PERIOD_YEAR">Year</string>
@@ -212,6 +215,7 @@
   <string name="PLG_REQUIREMENTS_SEARCH_ACTIVITIES">Search activities</string>
   <string name="PLG_REQUIREMENTS_SEARCH_PROVIDERS">Search providers</string>
   <string name="PLG_REQUIREMENTS_SEARCH_REQUIREMENTS">Search requirement types</string>
+  <string name="PLG_REQUIREMENTS_SETTINGS">Settings</string>
   <string name="PLG_REQUIREMENTS_SHORT_NAME">Short name</string>
   <string name="PLG_REQUIREMENTS_SHOW_ALL">Show all</string>
   <string name="PLG_REQUIREMENTS_SHOW_CONTRIBUTIONS">Show the activities this period is made up of</string>

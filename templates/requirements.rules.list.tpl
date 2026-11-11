@@ -58,74 +58,38 @@
     </div>
 {else}
     {foreach $types as $type}
-        <div class="card admidio-field-group" id="{$type.rowId}">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <span>
-                    <strong>{$type.name nofilter}</strong>
-                    {if $type.shortName}<span class="text-muted">({$type.shortName nofilter})</span>{/if}
-                    {if not $type.active}<span class="badge bg-secondary">{$l10n->get('PLG_REQUIREMENTS_INACTIVE')}</span>{/if}
-                </span>
-                {if $isAdmin}
-                <span class="admidio-icon-link">
-                    <a class="admidio-icon-link" href="{$type.addRuleUrl}">
-                        <i class="bi bi-plus-circle-fill" data-bs-toggle="tooltip" title="{$l10n->get('PLG_REQUIREMENTS_ADD_ROLE_RULE')}"></i></a>
-                    <a class="admidio-icon-link" href="{$type.editUrl}">
-                        <i class="bi bi-pencil-square" data-bs-toggle="tooltip" title="{$l10n->get('SYS_EDIT')}"></i></a>
-                    <a class="admidio-icon-link admidio-messagebox" href="javascript:void(0);" data-buttons="yes-no"
-                       data-message="{$type.deleteMessage}"
-                       data-href="callUrlHideElement('{$type.rowId}', '{$type.deleteUrl}', '{$csrfToken}')">
-                        <i class="bi bi-trash" data-bs-toggle="tooltip" title="{$l10n->get('SYS_DELETE')}"></i></a>
-                </span>
-                {/if}
-            </div>
-            <div class="card-body">
-                {if $type.description}<p class="mb-2">{$type.description nofilter}</p>{/if}
-                <p class="text-muted mb-2">
-                    {$l10n->get('PLG_REQUIREMENTS_PERIOD_UNIT')}: {$type.period}
-                    {if $isAdmin}&nbsp;|&nbsp; {$l10n->get('PLG_REQUIREMENTS_MULTIPLE_ROLES_MODE')}: {$type.multipleRoles}{/if}
-                </p>
-                {if $type.rules|@count eq 0}
-                    <p class="text-muted mb-0">{$l10n->get('PLG_REQUIREMENTS_NO_ROLE_RULES')}</p>
-                {else}
-                    <div class="table-responsive">
-                        <table class="table table-condensed table-hover mb-0">
-                            <thead>
-                                <tr>
-                                    <th>{$l10n->get('SYS_ROLE')}</th>
-                                    <th>{$l10n->get('PLG_REQUIREMENTS_REQUIRED_CREDITS')}</th>
-                                    <th>{$l10n->get('PLG_REQUIREMENTS_PARTIAL_PERIOD_MODE')}</th>
-                                    <th>{$l10n->get('PLG_REQUIREMENTS_PRORATION_BASIS')}</th>
-                                    <th>{$l10n->get('PLG_REQUIREMENTS_MEMBERSHIP_AT_PERIOD_START')}</th>
-                                    <th>{$l10n->get('PLG_REQUIREMENTS_VALIDITY')}</th>
-                                    <th></th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {foreach $type.rules as $rule}
-                                    <tr id="{$rule.rowId}">
-                                        <td>{$rule.roleName nofilter}</td>
-                                        <td>{$rule.credits}</td>
-                                        <td>{$rule.mode}</td>
-                                        <td>{if $rule.mode eq 'pro_rata'}{$rule.basis}{else}&ndash;{/if}</td>
-                                        <td>{if $rule.periodStart}{$l10n->get('SYS_YES')}{else}{$l10n->get('SYS_NO')}{/if}</td>
-                                        <td>{$rule.validity}</td>
-                                        <td class="text-end">
-                                            {if $isAdmin}
-                                            <a class="admidio-icon-link" href="{$rule.editUrl}">
-                                                <i class="bi bi-pencil-square" data-bs-toggle="tooltip" title="{$l10n->get('SYS_EDIT')}"></i></a>
-                                            <a class="admidio-icon-link admidio-messagebox" href="javascript:void(0);" data-buttons="yes-no"
-                                               data-message="{$rule.deleteAction.dataMessage}"
-                                               data-href="{$rule.deleteAction.dataHref}">
-                                                <i class="bi bi-trash" data-bs-toggle="tooltip" title="{$l10n->get('SYS_DELETE')}"></i></a>
-                                            {/if}
-                                        </td>
-                                    </tr>
-                                {/foreach}
-                            </tbody>
-                        </table>
-                    </div>
-                {/if}
-            </div>
-        </div>
+        {include 'requirements.rules.type.tpl' type=$type nested=false}
     {/foreach}
+{/if}
+
+{if $isAdmin}
+<script>
+    (function () {
+        var csrf = "{$csrfToken}";
+        document.querySelectorAll(".adm-req-inline").forEach(function (input) {
+            input.dataset.saved = input.value;
+            input.addEventListener("change", function () {
+                var body = new URLSearchParams({ adm_csrf_token: csrf, field: input.dataset.field, value: input.value });
+                input.classList.remove("is-invalid", "is-valid");
+                fetch(input.dataset.url, { method: "POST", body: body })
+                    .then(function (response) { return response.json(); })
+                    .then(function (result) {
+                        if (result.status === "success") {
+                            input.dataset.saved = input.value;
+                            input.classList.add("is-valid");
+                            setTimeout(function () { input.classList.remove("is-valid"); }, 1500);
+                        } else {
+                            input.classList.add("is-invalid");
+                            input.title = result.message;
+                            input.value = input.dataset.saved;
+                            {* The message is HTML from the server's purifier; show it as text. *}
+                            var tmp = document.createElement("div"); tmp.innerHTML = result.message;
+                            alert(tmp.textContent);
+                        }
+                    })
+                    .catch(function () { input.classList.add("is-invalid"); input.value = input.dataset.saved; });
+            });
+        });
+    })();
+</script>
 {/if}

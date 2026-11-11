@@ -7,7 +7,7 @@
  *
  * Parameters:
  * mode : list (default)
- *        | type-edit | type-save | type-delete | rule-edit | rule-save | rule-delete (administrators)
+ *        | type-edit | type-save | type-delete | rule-edit | rule-save | rule-inline | rule-delete (administrators)
  *        | own-edit | own-save | own-delete         a requirement of the member's own
  *        | target-edit | target-save | target-delete  the member's own target for one of the organization's
  * uuid : UUID of the requirement type, the role rule or the own target
@@ -35,7 +35,7 @@ try {
     $getMode = admFuncVariableIsValid($_GET, 'mode', 'string', array(
         'defaultValue' => 'list',
         'validValues' => array(
-            'list', 'type-edit', 'type-save', 'type-delete', 'rule-edit', 'rule-save', 'rule-delete',
+            'list', 'type-edit', 'type-save', 'type-delete', 'rule-edit', 'rule-save', 'rule-inline', 'rule-delete',
             'own-edit', 'own-save', 'own-delete', 'target-edit', 'target-save', 'target-delete'
         )
     ));
@@ -119,7 +119,7 @@ try {
         case 'list':
             $page = new RulePresenter();
             $page->createList($getQuery);
-            $gNavigation->addStartUrl(CURRENT_URL, $page->getHeadline(), 'bi-list-check');
+            $gNavigation->addUrl(CURRENT_URL, $page->getHeadline(), 'bi-list-check');
             $page->show();
             break;
 
@@ -205,6 +205,28 @@ try {
 
             $gNavigation->deleteLastUrl();
             echo json_encode(array('status' => 'success', 'url' => $gNavigation->getUrl()));
+            break;
+
+        case 'rule-inline':
+            // One field of a rule changed in the list: the required credits or one end of the
+            // validity. The rest of the rule stays as it is, and the service validates as for the form.
+            SecurityUtils::validateCsrfToken($_POST['adm_csrf_token']);
+            $field = admFuncVariableIsValid($_POST, 'field', 'string', array(
+                'requireValue' => true,
+                'validValues' => array('rrr_required_credits', 'rrr_valid_from', 'rrr_valid_until')
+            ));
+            $value = trim((string) ($_POST['value'] ?? ''));
+
+            $rule = new RequirementRoleRule($gDb);
+            $rule->readDataByUuid($getUuid);
+            if ((int) $rule->getValue('rrr_id') === 0) {
+                throw new Exception('SYS_INVALID_PAGE_VIEW');
+            }
+            $type = new RequirementType($gDb);
+            $type->readDataById((int) $rule->getValue('rrr_requirement_type_id'));
+
+            $service->saveRule($rule, $type, array($field => $field === 'rrr_required_credits' ? (float) $value : $value));
+            echo json_encode(array('status' => 'success'));
             break;
 
         case 'type-delete':

@@ -75,6 +75,7 @@ class RulePresenter extends RequirementsPresenter
                 'rules',
                 array('req_requirement_types', 'req_requirement_role_rules')
             );
+            $this->addSettingsMenuItem();
         }
 
         $this->assignSmartyVariable('searchUrl', $this->plugin->getUrl('rules.php'));
@@ -88,7 +89,7 @@ class RulePresenter extends RequirementsPresenter
             $rulesByType[(int) $rule['rrr_requirement_type_id']][] = $rule;
         }
 
-        $types = array();
+        $builtTypes = array();
         foreach ($service->findTypes($query) as $type) {
             $typeId = (int) $type['rqt_id'];
             if (!$isAdmin && !isset($rulesByType[$typeId])) {
@@ -98,13 +99,32 @@ class RulePresenter extends RequirementsPresenter
             foreach ($rulesByType[$typeId] ?? array() as $rule) {
                 $ruleRowId = 'adm_requirements_rule_' . $rule['rrr_uuid'];
                 $validity = ($rule['rrr_valid_from'] ?: '…') . ' – ' . ($rule['rrr_valid_until'] ?: '…');
+                // The partial-period handling, the pro-rata basis and the membership condition are
+                // details of a rule: one line of text instead of a column each.
+                $details = array();
+                if ($rule['rrr_partial_period_mode'] === 'pro_rata') {
+                    $basisKey = match ((string) $rule['rrr_proration_basis']) {
+                        'day' => 'PLG_REQUIREMENTS_PRORATION_DAY',
+                        'week' => 'PLG_REQUIREMENTS_PRORATION_WEEK',
+                        'month' => 'PLG_REQUIREMENTS_PRORATION_MONTH',
+                        default => ''
+                    };
+                    $details[] = $gL10n->get('PLG_REQUIREMENTS_PARTIAL_PRO_RATA')
+                        . ($basisKey === '' ? '' : ' (' . $gL10n->get($basisKey) . ')');
+                } else {
+                    $details[] = $gL10n->get('PLG_REQUIREMENTS_PARTIAL_FULL');
+                }
+                if ((bool) $rule['rrr_membership_at_period_start']) {
+                    $details[] = $gL10n->get('PLG_REQUIREMENTS_MEMBERSHIP_AT_PERIOD_START');
+                }
                 $typeRules[] = array(
                     'roleName' => SecurityUtils::encodeHTML((string) $rule['role_name']),
                     'credits' => (float) $rule['rrr_required_credits'],
-                    'mode' => $rule['rrr_partial_period_mode'],
-                    'basis' => $rule['rrr_proration_basis'],
-                    'periodStart' => (bool) $rule['rrr_membership_at_period_start'],
+                    'details' => SecurityUtils::encodeHTML(implode('; ', $details)),
                     'validity' => $validity,
+                    'validFrom' => (string) $rule['rrr_valid_from'],
+                    'validUntil' => (string) $rule['rrr_valid_until'],
+                    'inlineUrl' => $this->pageUrl('rules.php', array('mode' => 'rule-inline', 'uuid' => $rule['rrr_uuid'])),
                     'editUrl' => $this->pageUrl('rules.php', array('mode' => 'rule-edit', 'uuid' => $rule['rrr_uuid'])),
                     'rowId' => $ruleRowId,
                     'deleteAction' => $this->deleteAction(
@@ -115,7 +135,9 @@ class RulePresenter extends RequirementsPresenter
                 );
             }
 
-            $types[] = array(
+            $builtTypes[(int) $type['rqt_id']] = array(
+                'parentId' => (int) $type['rqt_parent_id'],
+                'parts' => array(),
                 'uuid' => $type['rqt_uuid'],
                 'rowId' => 'adm_requirements_type_' . $type['rqt_uuid'],
                 'name' => SecurityUtils::encodeHTML((string) $type['rqt_name']),
@@ -131,6 +153,18 @@ class RulePresenter extends RequirementsPresenter
                 'rules' => $typeRules
             );
         }
+
+        // A sub-requirement is shown inside the card of its parent, and on its own where a search
+        // finds only the part.
+        foreach ($builtTypes as $built) {
+            if ($built['parentId'] > 0 && isset($builtTypes[$built['parentId']])) {
+                $builtTypes[$built['parentId']]['parts'][] = $built;
+            }
+        }
+        $types = array_values(array_filter(
+            $builtTypes,
+            static fn(array $built): bool => $built['parentId'] === 0 || !isset($builtTypes[$built['parentId']])
+        ));
 
         // The member's own: requirements of their own, then their targets for the organization's.
         $format = $gSettingsManager->getString('system_date');

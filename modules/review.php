@@ -48,7 +48,7 @@ try {
         case 'list':
             $page = new ReviewPresenter();
             $page->createList($getRequirement, $getPeriod, $getQuarter, $getStatus);
-            $gNavigation->addStartUrl(CURRENT_URL, $page->getHeadline(), 'bi-clipboard-data');
+            $gNavigation->addUrl(CURRENT_URL, $page->getHeadline(), 'bi-clipboard-data');
             $page->show();
             break;
 

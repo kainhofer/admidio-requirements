@@ -41,7 +41,7 @@ try {
         case 'list':
             $page = new ProviderPresenter();
             $page->createList($getQuery);
-            $gNavigation->addStartUrl(CURRENT_URL, $page->getHeadline(), 'bi-shop');
+            $gNavigation->addUrl(CURRENT_URL, $page->getHeadline(), 'bi-shop');
             $page->show();
             break;
 

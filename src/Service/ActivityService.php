@@ -467,7 +467,7 @@ final class ActivityService
      * the activities with a credit for it.
      *
      * @param array{userId?:?int,query?:string,requirementTypeId?:?int,periodRange?:?array,
-     *     providerId?:?int,dateFrom?:string,dateTo?:string} $filter
+     *     providerId?:?int,dateFrom?:string,dateTo?:string,creditedFrom?:string,creditedTo?:string} $filter
      * @param string $groupBy a key of LIST_GROUP_COLUMNS, or '' for no grouping; the groups come
      *     first in the order so that every group is one run of consecutive rows
      * @param array<int,array{0:string,1:string}> $order keys of LIST_SORT_COLUMNS with 'asc'/'desc'
@@ -491,7 +491,12 @@ final class ActivityService
 
         $requirementTypeId = $filter['requirementTypeId'] ?? null;
         $periodRange = $filter['periodRange'] ?? null;
-        $creditJoin = ($periodRange === null && $requirementTypeId === null ? ' LEFT JOIN ' : ' INNER JOIN ')
+        // The credited-period bounds of the filter bar: the first and last day of what the credits
+        // are booked to. Like a requirement they keep only the activities that have such a credit.
+        $creditedFrom = (string) ($filter['creditedFrom'] ?? '');
+        $creditedTo = (string) ($filter['creditedTo'] ?? '');
+        $creditJoin = ($periodRange === null && $requirementTypeId === null && $creditedFrom === '' && $creditedTo === ''
+                ? ' LEFT JOIN ' : ' INNER JOIN ')
             . RequirementsTables::activityCredits() . ' AS rac ON rac.rac_activity_id = rqa.rqa_id';
         if ($requirementTypeId !== null) {
             $creditJoin .= ' AND rac.rac_requirement_type_id = ?';
@@ -503,6 +508,14 @@ final class ActivityService
             $creditJoin .= ' AND rac.rac_period_reference BETWEEN ? AND ?';
             $params[] = $periodRange[0];
             $params[] = $periodRange[1];
+        }
+        if ($creditedFrom !== '') {
+            $creditJoin .= ' AND rac.rac_period_reference >= ?';
+            $params[] = $creditedFrom;
+        }
+        if ($creditedTo !== '') {
+            $creditJoin .= ' AND rac.rac_period_reference <= ?';
+            $params[] = $creditedTo;
         }
 
         $from = ' FROM ' . RequirementsTables::activities() . ' AS rqa
@@ -732,6 +745,33 @@ final class ActivityService
         }
 
         return $changed;
+    }
+
+    /**
+     * The first and last calendar year a credit of the activities this user sees is booked to, for
+     * the period selection of the filter bar.
+     *
+     * @return array{0:int,1:int}|null null without any credit
+     * @throws Exception
+     */
+    public function creditedYearRange(): ?array
+    {
+        global $gCurrentOrgId, $gCurrentUser;
+
+        $sql = 'SELECT MIN(rac.rac_period_reference) AS first_ref, MAX(rac.rac_period_reference) AS last_ref
+                  FROM ' . RequirementsTables::activityCredits() . ' AS rac
+            INNER JOIN ' . RequirementsTables::activities() . ' AS rqa ON rqa.rqa_id = rac.rac_activity_id
+                 WHERE rqa.rqa_org_id = ?';
+        $params = array((int) $gCurrentOrgId);
+        if (!Component::isAdministrable(RequirementsPlugin::ID)) {
+            $sql .= ' AND rqa.rqa_user_id = ?';
+            $params[] = (int) $gCurrentUser->getValue('usr_id');
+        }
+        $row = $this->db->queryPrepared($sql, $params)->fetch();
+        if (!$row || $row['first_ref'] === null) {
+            return null;
+        }
+        return array((int) substr((string) $row['first_ref'], 0, 4), (int) substr((string) $row['last_ref'], 0, 4));
     }
 
     /**

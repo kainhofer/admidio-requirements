@@ -16,6 +16,7 @@
   <string name="PLG_REQUIREMENTS_BEGIN_DATE">Beginndatum</string>
   <string name="PLG_REQUIREMENTS_CERTIFICATE_DATE">Zertifikatsdatum</string>
   <string name="PLG_REQUIREMENTS_CERTIFICATE_DATE_HELP">Optionales Datum auf dem Zertifikat, z. B. das Prüfungsdatum.</string>
+  <string name="PLG_REQUIREMENTS_CLEAR_FILTERS">Filter zurücksetzen</string>
   <string name="PLG_REQUIREMENTS_COLUMNS">Spalten</string>
   <string name="PLG_REQUIREMENTS_CONTRIBUTIONS_OF">Es werden nur die Aktivitäten von #VAR1# angezeigt.</string>
   <string name="PLG_REQUIREMENTS_CONTRIBUTIONS_TO">Es werden nur die Aktivitäten angezeigt, die #VAR1# angerechnet werden.</string>
@@ -32,15 +33,15 @@
   <string name="PLG_REQUIREMENTS_CREDITS">Punkte</string>
   <string name="PLG_REQUIREMENTS_CREDITS_ACCEPTED">Anerkannte Punkte</string>
   <string name="PLG_REQUIREMENTS_CREDITS_CLAIMED">Gemeldete Punkte</string>
-  <string name="PLG_REQUIREMENTS_DATE_FROM">Von</string>
-  <string name="PLG_REQUIREMENTS_DATE_UNTIL">Bis</string>
   <string name="PLG_REQUIREMENTS_DESCRIPTION">Verwaltet Mitgliederaktivitäten und wiederkehrende Anforderungen wie Schulungen, Zertifizierungen und Weiterbildung.</string>
+  <string name="PLG_REQUIREMENTS_DETAILS">Details</string>
   <string name="PLG_REQUIREMENTS_EDIT_POLICY">Bearbeitung durch Mitglieder</string>
   <string name="PLG_REQUIREMENTS_EDIT_POLICY_ALWAYS">Mitglieder dürfen ihre eigenen Aktivitäten immer bearbeiten und löschen</string>
   <string name="PLG_REQUIREMENTS_EDIT_POLICY_DESC">Legt fest, ob das Einreichen einer Aktivität sie gegen spätere Änderungen durch das Mitglied sperrt. Administratoren können Einträge weiterhin prüfen und korrigieren.</string>
   <string name="PLG_REQUIREMENTS_EDIT_POLICY_UNTIL_SUBMITTED">Mitglieder dürfen nur Entwürfe bearbeiten und löschen</string>
   <string name="PLG_REQUIREMENTS_END_DATE">Enddatum</string>
   <string name="PLG_REQUIREMENTS_EXPORT">Exportieren</string>
+  <string name="PLG_REQUIREMENTS_EXPORT_PDF">PDF mit Zertifikaten</string>
   <string name="PLG_REQUIREMENTS_EXPORT_SPREADSHEET">Tabelle (Excel)</string>
   <string name="PLG_REQUIREMENTS_EXPORT_WITH_CERTIFICATES">Tabelle mit Nachweisen (ZIP)</string>
   <string name="PLG_REQUIREMENTS_FILES">Nachweise</string>
@@ -155,10 +156,12 @@
   <string name="PLG_REQUIREMENTS_PERIOD_CALENDAR_YEAR">Kalenderjahr</string>
   <string name="PLG_REQUIREMENTS_PERIOD_COUNT">Zeitraum-Anzahl</string>
   <string name="PLG_REQUIREMENTS_PERIOD_COUNT_HELP">Anzahl der Zeiteinheiten. Kalenderzeiträume unterstützen derzeit nur den Wert 1.</string>
+  <string name="PLG_REQUIREMENTS_PERIOD_FROM">Zeitraum von</string>
   <string name="PLG_REQUIREMENTS_PERIOD_MONTH">Monat</string>
   <string name="PLG_REQUIREMENTS_PERIOD_OF_PARENT">wie die Anforderung darüber</string>
   <string name="PLG_REQUIREMENTS_PERIOD_QUARTER">Quartal</string>
   <string name="PLG_REQUIREMENTS_PERIOD_RECURRING">Alle #VAR1#, ab der letzten Erfüllung</string>
+  <string name="PLG_REQUIREMENTS_PERIOD_TO">Zeitraum bis</string>
   <string name="PLG_REQUIREMENTS_PERIOD_UNIT">Zeiteinheit</string>
   <string name="PLG_REQUIREMENTS_PERIOD_WEEK">Woche</string>
   <string name="PLG_REQUIREMENTS_PERIOD_YEAR">Jahr</string>
@@ -212,6 +215,7 @@
   <string name="PLG_REQUIREMENTS_SEARCH_ACTIVITIES">Aktivitäten suchen</string>
   <string name="PLG_REQUIREMENTS_SEARCH_PROVIDERS">Anbieter suchen</string>
   <string name="PLG_REQUIREMENTS_SEARCH_REQUIREMENTS">Anforderungstypen suchen</string>
+  <string name="PLG_REQUIREMENTS_SETTINGS">Einstellungen</string>
   <string name="PLG_REQUIREMENTS_SHORT_NAME">Kurzname</string>
   <string name="PLG_REQUIREMENTS_SHOW_ALL">Alle anzeigen</string>
   <string name="PLG_REQUIREMENTS_SHOW_CONTRIBUTIONS">Die Aktivitäten anzeigen, aus denen sich dieser Zeitraum zusammensetzt</string>

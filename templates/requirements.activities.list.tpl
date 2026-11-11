@@ -3,6 +3,13 @@
     .adm-req-overview .card-header.collapsed .adm-req-collapse-icon { transform: rotate(-90deg); }
     {* Grouped rows sit one step in from their heading, whichever column happens to come first. *}
     #adm_req_activities_table.adm-req-grouped > tbody > tr:not(.admidio-group-heading) > td:first-child { padding-left: 2rem; }
+    {* The page length control of DataTables, moved into the toolbar: keep "Show [25] entries" on one line. *}
+    #adm_req_toolbar .dt-length { flex: 0 0 auto; white-space: nowrap; }
+    #adm_req_toolbar .dt-length label { display: inline-flex; align-items: center; gap: .5rem; margin: 0; font-weight: 400; white-space: nowrap; }
+    #adm_req_toolbar .dt-length select { display: inline-block; width: auto; }
+    .adm-req-dropzone { min-width: 3rem; min-height: 1.75rem; border: 1px dashed transparent; border-radius: .25rem; }
+    .adm-req-dropzone-over { border-color: var(--bs-primary); background: var(--bs-primary-bg-subtle); }
+    .adm-req-dropzone-busy { opacity: .5; }
     {* Bootstrap paints cells from --bs-table-bg, so the variable is set rather than background-color. *}
     #adm_req_activities_table > tbody > tr.admidio-group-heading { --bs-table-bg: lightgray; }
 </style>
@@ -75,16 +82,26 @@
                 </select>
             </div>
             <div class="col-6 col-lg-auto">
-                <label class="form-label small mb-1" for="adm_req_from">{$l10n->get('PLG_REQUIREMENTS_DATE_FROM')}</label>
-                <input type="date" id="adm_req_from" class="form-control">
+                <label class="form-label small mb-1" for="adm_req_year_from">{$l10n->get('PLG_REQUIREMENTS_PERIOD_FROM')}</label>
+                <select id="adm_req_year_from" class="form-select">
+                    <option value="">&nbsp;</option>
+                    {foreach $yearOptions as $y}<option value="{$y}">{$y}</option>{/foreach}
+                </select>
             </div>
             <div class="col-6 col-lg-auto">
-                <label class="form-label small mb-1" for="adm_req_to">{$l10n->get('PLG_REQUIREMENTS_DATE_UNTIL')}</label>
-                <input type="date" id="adm_req_to" class="form-control">
+                <label class="form-label small mb-1" for="adm_req_year_to">{$l10n->get('PLG_REQUIREMENTS_PERIOD_TO')}</label>
+                <select id="adm_req_year_to" class="form-select">
+                    <option value="">&nbsp;</option>
+                    {foreach $yearOptions as $y}<option value="{$y}">{$y}</option>{/foreach}
+                </select>
             </div>
             <div class="col-sm-12 col-lg">
                 <label class="form-label small mb-1" for="adm_req_query">{$l10n->get('PLG_REQUIREMENTS_SEARCH')}</label>
                 <input type="search" id="adm_req_query" value="{$query}" class="form-control" placeholder="{$searchPlaceholder}">
+            </div>
+            <div class="col-auto">
+                <button type="button" id="adm_req_clear_filters" class="btn btn-secondary">
+                    <i class="bi bi-x-circle"></i> {$l10n->get('PLG_REQUIREMENTS_CLEAR_FILTERS')}</button>
             </div>
         </form>
     </div>
@@ -100,7 +117,9 @@
     </div>
 {/if}
 
-<div class="d-flex flex-wrap justify-content-end align-items-center gap-2 mb-2">
+<div id="adm_req_toolbar" class="d-flex flex-wrap align-items-center gap-2 mb-2">
+    {* The page length control of the table is moved in here as the first item. *}
+    <span class="ms-auto"></span>
     <label class="small" for="adm_req_group">{$l10n->get('PLG_REQUIREMENTS_GROUP_BY')}</label>
     <select id="adm_req_group" class="form-select form-select-sm w-auto">
         {foreach $groupOptions as $value => $label}
@@ -130,26 +149,25 @@
                 <i class="bi bi-arrow-counterclockwise"></i> {$l10n->get('PLG_REQUIREMENTS_VIEW_RESET')}</a></li>
         </ul>
     </div>
-    {if $filesEnabled}
-        <div class="dropdown">
-            <button type="button" class="btn btn-sm btn-secondary dropdown-toggle" data-bs-toggle="dropdown"
-                    aria-expanded="false">
-                <i class="bi bi-download"></i> {$l10n->get('PLG_REQUIREMENTS_EXPORT')}
-            </button>
-            <ul class="dropdown-menu dropdown-menu-end">
-                <li><a class="dropdown-item adm-req-export" href="javascript:void(0);">
-                    <i class="bi bi-file-earmark-spreadsheet"></i> {$l10n->get('PLG_REQUIREMENTS_EXPORT_SPREADSHEET')}</a></li>
-                <li><a class="dropdown-item adm-req-export" href="javascript:void(0);" data-certificates="1">
-                    <i class="bi bi-file-earmark-zip"></i> {$l10n->get('PLG_REQUIREMENTS_EXPORT_WITH_CERTIFICATES')}</a></li>
-            </ul>
-        </div>
-    {else}
-        <button type="button" class="btn btn-sm btn-secondary adm-req-export">
-            <i class="bi bi-file-earmark-spreadsheet"></i> {$l10n->get('PLG_REQUIREMENTS_EXPORT')}
+    <div class="dropdown">
+        <button type="button" class="btn btn-sm btn-secondary dropdown-toggle" data-bs-toggle="dropdown"
+                aria-expanded="false">
+            <i class="bi bi-download"></i> {$l10n->get('PLG_REQUIREMENTS_EXPORT')}
         </button>
-    {/if}
+        <ul class="dropdown-menu dropdown-menu-end">
+            <li><a class="dropdown-item adm-req-export" href="javascript:void(0);">
+                <i class="bi bi-file-earmark-spreadsheet"></i> {$l10n->get('PLG_REQUIREMENTS_EXPORT_SPREADSHEET')}</a></li>
+            {if $filesEnabled}
+            <li><a class="dropdown-item adm-req-export" href="javascript:void(0);" data-certificates="1">
+                <i class="bi bi-file-earmark-zip"></i> {$l10n->get('PLG_REQUIREMENTS_EXPORT_WITH_CERTIFICATES')}</a></li>
+            {/if}
+            <li><a class="dropdown-item adm-req-export" href="javascript:void(0);" data-format="pdf">
+                <i class="bi bi-file-earmark-pdf"></i> {$l10n->get('PLG_REQUIREMENTS_EXPORT_PDF')}</a></li>
+        </ul>
+    </div>
 </div>
 
+<div id="adm_req_drop_message" class="alert alert-danger d-none" role="alert"></div>
 <table id="adm_req_activities_table" class="table table-condensed table-hover" style="width: 100%;">
     <thead>
         <tr>{foreach $columns as $c}<th>{$c.label}</th>{/foreach}<th>&nbsp;</th></tr>

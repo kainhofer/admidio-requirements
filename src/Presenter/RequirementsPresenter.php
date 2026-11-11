@@ -6,6 +6,7 @@ use Admidio\Components\Entity\Component;
 use Admidio\Infrastructure\Exception;
 use Admidio\Infrastructure\Language;
 use Admidio\Infrastructure\Plugins\Plugin;
+use Admidio\Infrastructure\Plugins\PluginPanel;
 use Admidio\Infrastructure\Plugins\PluginRegistry;
 use Admidio\Infrastructure\Utils\SecurityUtils;
 use Admidio\UI\Presenter\PagePresenter;
@@ -51,6 +52,25 @@ abstract class RequirementsPresenter extends PagePresenter
     protected function addHistoryMenuItem(string $area, array $tables, array $parameters = array()): void
     {
         ChangelogService::displayHistoryButton($this, 'requirements_' . $area, $tables, true, $parameters);
+    }
+
+    /**
+     * The page-functions menu entry that opens the plugin's panel of the preferences page. It is
+     * for administrators only, because the panel holds the settings of the whole organization.
+     */
+    protected function addSettingsMenuItem(): void
+    {
+        global $gL10n;
+
+        $this->addPageFunctionsMenuItem(
+            'menu_item_requirements_settings',
+            $gL10n->get('PLG_REQUIREMENTS_SETTINGS'),
+            SecurityUtils::encodeUrl(
+                ADMIDIO_URL . FOLDER_MODULES . '/preferences.php',
+                array('panel' => PluginPanel::normalizeId(RequirementsPlugin::ID))
+            ),
+            'bi-gear'
+        );
     }
 
     /**

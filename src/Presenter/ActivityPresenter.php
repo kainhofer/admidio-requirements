@@ -285,6 +285,14 @@ class ActivityPresenter extends RequirementsPresenter
                 'name' => SecurityUtils::encodeHTML((string) $provider['rqp_name'])
             );
         }
+        $years = array();
+        $range = (new ActivityService($gDb))->creditedYearRange();
+        if ($range !== null) {
+            for ($year = max($range[1], (int) date('Y')); $year >= $range[0]; $year--) {
+                $years[] = $year;
+            }
+        }
+        $this->assignSmartyVariable('yearOptions', $years);
         $this->assignSmartyVariable('query', $query);
         $this->assignSmartyVariable('typeOptions', $typeOptions);
         $this->assignSmartyVariable('providerOptions', $providerOptions);
@@ -316,6 +324,7 @@ class ActivityPresenter extends RequirementsPresenter
             $this->addPageFunctionsMenuItem('menu_item_requirements_providers',
                 $gL10n->get('PLG_REQUIREMENTS_PROVIDERS'), $this->pageUrl('providers.php'), 'bi-shop');
             $this->addHistoryMenuItem('activities', array('req_activities', 'req_activity_credits'));
+            $this->addSettingsMenuItem();
         }
 
         $effectiveUserUuid = $filter['userId'] === null ? '' : $userUuid;
@@ -378,10 +387,14 @@ class ActivityPresenter extends RequirementsPresenter
         $langCode = $gL10n->getLanguageIsoCode() ?: 'en';
         $config = array(
             'dataUrl' => $this->pageUrl('index.php', array('mode' => 'data')),
+            'uploadUrl' => $this->pageUrl('index.php', array('mode' => 'file-upload')),
+            'uploadFailed' => $gL10n->get('SYS_ERROR'),
+            'csrfToken' => $GLOBALS['gCurrentSession']->getCsrfToken(),
             'exportUrl' => $this->pageUrl('index.php', array('mode' => 'export')),
             // Changing the requirement while a period from the overview narrows the list starts over
             // from the page: the period belongs to the requirement it was chosen for.
             'listUrl' => $this->pageUrl('index.php', array('mode' => 'list', 'user' => $effectiveUserUuid)),
+            'baseUrl' => $this->pageUrl('index.php', array('mode' => 'list')),
             'languageUrl' => ADMIDIO_URL . FOLDER_LIBS . '/datatables/language/datatables.' . $langCode . '.json',
             'emptyTable' => $gL10n->get('SYS_NO_ENTRIES'),
             'allLabel' => $gL10n->get('SYS_ALL'),
@@ -497,6 +510,7 @@ class ActivityPresenter extends RequirementsPresenter
                 autoWidth: false,
                 language: { url: admReqConfig.languageUrl, emptyTable: admReqConfig.emptyTable },
                 pageLength: 25,
+                layout: { topStart: "pageLength", topEnd: null, bottomStart: "info", bottomEnd: "paging" },
                 lengthMenu: [[10, 25, 50, 100, -1], [10, 25, 50, 100, admReqConfig.allLabel]],
                 order: [[1, "desc"]],
                 ajax: {
@@ -504,8 +518,8 @@ class ActivityPresenter extends RequirementsPresenter
                     data: function (d) {
                         d.requirement = $("#adm_req_requirement").val();
                         d.provider = $("#adm_req_provider").val();
-                        d.from = $("#adm_req_from").val();
-                        d.to = $("#adm_req_to").val();
+                        d.year_from = $("#adm_req_year_from").val();
+                        d.year_to = $("#adm_req_year_to").val();
                         d.query = $("#adm_req_query").val();
                         d.group = $("#adm_req_group").val();
                         d.granularity = $("#adm_req_granularity").val();
@@ -517,6 +531,11 @@ class ActivityPresenter extends RequirementsPresenter
                 columns: admReqConfig.columns.map(function (c) {
                     return { data: c.key, name: c.key, orderable: c.sortable, visible: admReqShown(c.key) };
                 }).concat([{ data: "actions", orderable: false, className: "text-end text-nowrap" }]),
+                // The DOM of the table exists only once the language file has loaded, so the page length
+                // control is moved into the toolbar row (as its first item) from here.
+                initComplete: function () {
+                    $("#adm_req_toolbar").prepend($(this.api().table().container()).find(".dt-length").detach());
+                },
                 drawCallback: function () {
                     admReqGroupHeadings(this.api());
                 }
@@ -539,7 +558,7 @@ class ActivityPresenter extends RequirementsPresenter
                 clearTimeout(admReqQueryTimer);
                 admReqQueryTimer = setTimeout(function () { admReqTable.ajax.reload(); }, 300);
             });
-            $("#adm_req_provider, #adm_req_from, #adm_req_to").on("change", function () {
+            $("#adm_req_provider, #adm_req_year_from, #adm_req_year_to").on("change", function () {
                 admReqTable.ajax.reload();
             });
             $("#adm_req_requirement").on("change", function () {
@@ -576,16 +595,63 @@ class ActivityPresenter extends RequirementsPresenter
                 admReqApplyColumns();
             });
             $("#adm_req_filter").on("submit", function (e) { e.preventDefault(); });
+            // Certificates dropped on the files cell of an activity are attached to it. The cell is
+            // redrawn with the table, so the handlers sit on the table and not on the cells.
+            function admReqUpload(zone, fileList) {
+                const data = new FormData();
+                data.append("adm_csrf_token", admReqConfig.csrfToken);
+                Array.prototype.forEach.call(fileList, function (f) { data.append("userfile[]", f); });
+                zone.addClass("adm-req-dropzone-busy");
+                $.ajax({
+                    url: admReqConfig.uploadUrl + "&uuid=" + encodeURIComponent(zone.data("uuid")),
+                    type: "POST", data: data, processData: false, contentType: false, dataType: "json"
+                }).done(function (result) {
+                    $("#adm_req_drop_message").toggleClass("d-none", result.status === "success").html(result.message || "");
+                }).fail(function () {
+                    $("#adm_req_drop_message").removeClass("d-none").text(admReqConfig.uploadFailed);
+                }).always(function () {
+                    admReqTable.ajax.reload(null, false);
+                });
+            }
+            $("#adm_req_activities_table").on("dragover dragenter", ".adm-req-dropzone", function (e) {
+                e.preventDefault();
+                $(this).addClass("adm-req-dropzone-over");
+            }).on("dragleave dragend", ".adm-req-dropzone", function () {
+                $(this).removeClass("adm-req-dropzone-over");
+            }).on("drop", ".adm-req-dropzone", function (e) {
+                e.preventDefault();
+                $(this).removeClass("adm-req-dropzone-over");
+                const files = e.originalEvent.dataTransfer.files;
+                if (files.length > 0) { admReqUpload($(this), files); }
+            });
+            // A file dropped beside the target would make the browser open it and leave the page.
+            $(document).on("dragover drop", function (e) {
+                if (!$(e.target).closest(".adm-req-dropzone").length) { e.preventDefault(); }
+            });
+            // Empties every field of the filter bar. A narrowing that came in through the link of an
+            // overview bar or a review roster is not a field of the bar, so that one is dropped by
+            // loading the list without it.
+            $("#adm_req_clear_filters").on("click", function () {
+                $("#adm_req_requirement, #adm_req_provider, #adm_req_year_from, #adm_req_year_to, #adm_req_query").val("");
+                if (admReqConfig.period !== "" || admReqConfig.user !== "") {
+                    window.location.href = admReqConfig.baseUrl;
+                    return;
+                }
+                admReqTable.ajax.reload();
+            });
             // The export takes the filters the table is showing, so the file is the list on screen.
             $(".adm-req-export").on("click", function () {
                 const params = admReqTable.ajax.params();
-                const keep = ["requirement", "provider", "from", "to", "query", "user", "period", "period_to"];
+                const keep = ["requirement", "provider", "year_from", "year_to", "query", "user", "period", "period_to"];
                 const query = keep.reduce(function (p, k) {
                     p[k] = params[k];
                     return p;
                 }, {});
                 if ($(this).data("certificates")) {
                     query.certificates = 1;
+                }
+                if ($(this).data("format")) {
+                    query.format = $(this).data("format");
                 }
                 window.location.href = admReqConfig.exportUrl + "&" + $.param(query);
             });
@@ -717,7 +783,10 @@ class ActivityPresenter extends RequirementsPresenter
                     . SecurityUtils::encodeHTML(trim($row['last_name'] . ', ' . $row['first_name'], ', ')) . '</a>',
                 'attendance' => (float) $row['rqa_attendance'] > 0 ? self::formatCredits($row['rqa_attendance']) : '',
                 'certificate' => SecurityUtils::encodeHTML($formatDate($row['rqa_certificate_date'])),
-                'files' => $this->filesCell($filesByActivity[(int) $row['rqa_id']] ?? array()),
+                'files' => $this->filesCell(
+                    $filesByActivity[(int) $row['rqa_id']] ?? array(),
+                    $editable ? (string) $row['rqa_uuid'] : ''
+                ),
                 'actions' => $this->statusIcon($row) . self::actionsHtml(ListActions::filter('requirements-activities', $actions, $row))
             );
         }
@@ -759,8 +828,8 @@ class ActivityPresenter extends RequirementsPresenter
             'requirementTypeId' => $resolved['type'] === null ? null : (int) $resolved['type']['rqt_id'],
             'periodRange' => $resolved['periodRange'],
             'providerId' => $providerId,
-            'dateFrom' => $filters['from'],
-            'dateTo' => $filters['to']
+            'creditedFrom' => (int) $filters['yearFrom'] > 0 ? sprintf('%04d-01-01', (int) $filters['yearFrom']) : '',
+            'creditedTo' => (int) $filters['yearTo'] > 0 ? sprintf('%04d-12-31', (int) $filters['yearTo']) : ''
         );
     }
 
@@ -772,9 +841,9 @@ class ActivityPresenter extends RequirementsPresenter
      * @param array<string,string> $filters as for listData()
      * @throws Exception|\PhpOffice\PhpSpreadsheet\Writer\Exception
      */
-    public function export(array $filters, bool $withCertificates = false): void
+    public function export(array $filters, bool $withCertificates = false, string $format = 'xlsx'): void
     {
-        global $gDb;
+        global $gDb, $gL10n;
 
         $resolved = $this->resolveListFilter(
             $filters['requirement'],
@@ -785,6 +854,16 @@ class ActivityPresenter extends RequirementsPresenter
         $filter = $this->serviceFilter($filters, $resolved);
         $service = new ActivityExportService($gDb);
         $filename = 'requirements-activities-' . date('Y-m-d');
+
+        if ($format === 'pdf') {
+            $pdf = $service->pdf($filter, $gL10n->get('PLG_REQUIREMENTS_ACTIVITIES'));
+            header('Content-Type: application/pdf');
+            header('Content-Disposition: attachment; filename="' . $filename . '.pdf"');
+            header('Content-Length: ' . strlen($pdf));
+            header('Cache-Control: private, must-revalidate');
+            echo $pdf;
+            return;
+        }
 
         if (!$withCertificates) {
             $spreadsheet = $service->spreadsheet($filter);
@@ -817,7 +896,7 @@ class ActivityPresenter extends RequirementsPresenter
      *
      * @param array<int,array<string,mixed>> $files
      */
-    private function filesCell(array $files): string
+    private function filesCell(array $files, string $dropUuid = ''): string
     {
         $html = '';
         foreach ($files as $file) {
@@ -825,7 +904,10 @@ class ActivityPresenter extends RequirementsPresenter
                 . '"><i class="bi bi-paperclip" data-bs-toggle="tooltip" title="'
                 . SecurityUtils::encodeHTML((string) $file['raf_name']) . '"></i></a>';
         }
-        return $html;
+        // The cell of an activity the viewer may edit takes certificates dropped on it. The wrapper
+        // keeps a minimum size, so that an empty cell is a target as well.
+        return $dropUuid === '' ? $html : '<div class="adm-req-dropzone" data-uuid="'
+            . SecurityUtils::encodeHTML($dropUuid) . '">' . $html . '</div>';
     }
 
     /**
@@ -952,34 +1034,38 @@ class ActivityPresenter extends RequirementsPresenter
     }
 
     /**
-     * The activity status as a coloured dot for the actions column: draft is amber, submitted is
-     * green and withdrawn is red. A review verdict, where one exists, is added to the tooltip.
+     * The activity status for the actions column: draft is amber and withdrawn is red. Submitted is
+     * the normal state and gets no icon of its own - a green check would read as "approved" - so it
+     * shows one only where a review verdict exists, which is then the tooltip.
      */
     private function statusIcon(array $activity): string
     {
         global $gL10n;
 
-        [$icon, $colour, $textKey] = match ((string) ($activity['rqa_status'] ?? '')) {
-            'draft' => array('bi-pencil-fill', 'text-warning', 'PLG_REQUIREMENTS_STATUS_DRAFT'),
-            'withdrawn' => array('bi-x-circle-fill', 'text-danger', 'PLG_REQUIREMENTS_STATUS_WITHDRAWN'),
-            default => array('bi-check-circle-fill', 'text-success', 'PLG_REQUIREMENTS_STATUS_SUBMITTED')
-        };
+        $status = (string) ($activity['rqa_status'] ?? '');
+        $verdict = (string) ($activity['rqa_review_status'] ?? '');
 
-        $tooltip = $gL10n->get($textKey);
-        $reviewKey = match ((string) ($activity['rqa_review_status'] ?? '')) {
-            'open' => 'PLG_REQUIREMENTS_REVIEW_OPEN',
-            'accepted' => 'PLG_REQUIREMENTS_REVIEW_ACCEPTED',
-            'partially_accepted' => 'PLG_REQUIREMENTS_REVIEW_PARTIALLY_ACCEPTED',
-            'not_accepted' => 'PLG_REQUIREMENTS_REVIEW_NOT_ACCEPTED',
-            'clarification' => 'PLG_REQUIREMENTS_REVIEW_CLARIFICATION',
-            default => ''
-        };
-        if ($reviewKey !== '') {
-            $tooltip .= ' – ' . $gL10n->get($reviewKey);
+        if ($status === 'draft') {
+            [$icon, $colour, $text] = array('bi-pencil-fill', 'text-warning', $gL10n->get('PLG_REQUIREMENTS_STATUS_DRAFT'));
+        } elseif ($status === 'withdrawn') {
+            [$icon, $colour, $text] = array('bi-x-circle-fill', 'text-danger', $gL10n->get('PLG_REQUIREMENTS_STATUS_WITHDRAWN'));
+        } else {
+            // Submitted and still open: nothing to flag. Only a decision of the review is worth an icon.
+            [$icon, $colour, $key] = match ($verdict) {
+                'accepted' => array('bi-check-circle-fill', 'text-success', 'PLG_REQUIREMENTS_REVIEW_ACCEPTED'),
+                'partially_accepted' => array('bi-dash-circle-fill', 'text-warning', 'PLG_REQUIREMENTS_REVIEW_PARTIALLY_ACCEPTED'),
+                'not_accepted' => array('bi-x-circle-fill', 'text-danger', 'PLG_REQUIREMENTS_REVIEW_NOT_ACCEPTED'),
+                'clarification' => array('bi-question-circle-fill', 'text-warning', 'PLG_REQUIREMENTS_REVIEW_CLARIFICATION'),
+                default => array('', '', '')
+            };
+            if ($icon === '') {
+                return '';
+            }
+            $text = $gL10n->get($key);
         }
 
         return '<i class="bi ' . $icon . ' ' . $colour . '" data-bs-toggle="tooltip" title="'
-            . SecurityUtils::encodeHTML($tooltip) . '"></i> ';
+            . SecurityUtils::encodeHTML($text) . '"></i> ';
     }
 
     /**
