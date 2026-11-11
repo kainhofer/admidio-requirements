@@ -15,8 +15,8 @@
  * user        : UUID of the member the list is narrowed to; administrators only
  *
  * mode=data is the server-side DataTables endpoint of the activity table. Besides the DataTables
- * parameters (draw, start, length, order, columns) it takes the filter bar: provider (UUID), year_from,
- * year_to (credited calendar years), group (period | requirement | provider | begin | end | certificate) and granularity
+ * parameters (draw, start, length, order, columns) it takes the filter bar: provider (UUID), credited_from,
+ * credited_to (the first and last day of the credited periods), group (period | requirement | provider | begin | end | certificate) and granularity
  * (year | quarter | month) for the date groups. mode=export takes the same filters and sends the
  * list as an Excel file in the importer's layout, with format=pdf as one PDF (table and certificates),
  * with certificates=1 as a ZIP of that file and the
@@ -81,8 +81,8 @@ try {
                 'user' => $getUser,
                 'query' => $getQuery,
                 'provider' => admFuncVariableIsValid($_GET, 'provider', 'uuid'),
-                'yearFrom' => admFuncVariableIsValid($_GET, 'year_from', 'int'),
-                'yearTo' => admFuncVariableIsValid($_GET, 'year_to', 'int'),
+                'creditedFrom' => admFuncVariableIsValid($_GET, 'credited_from', 'date'),
+                'creditedTo' => admFuncVariableIsValid($_GET, 'credited_to', 'date'),
                 'group' => admFuncVariableIsValid($_GET, 'group', 'string', array(
                     'validValues' => array('', 'period', 'requirement', 'provider', 'begin', 'end', 'certificate')
                 )),

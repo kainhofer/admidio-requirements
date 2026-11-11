@@ -55,8 +55,9 @@ class ActivityPresenter extends RequirementsPresenter
             }
         }
 
-        // A part has the period of its parent, so it has no row and no period heading of its own: its
-        // bar sits directly under the parent's bar of the same period, named inside the bar.
+        // A part has the period of its parent, so it has no period heading of its own: its row sits
+        // directly under the parent's, with its name in the name column and a bar for each period
+        // of the parent.
         $ordered = array();
         foreach ($overview as $requirement) {
             if ($requirement['parentId'] > 0) {
@@ -83,6 +84,10 @@ class ActivityPresenter extends RequirementsPresenter
                     );
                 }
             }
+            $requirement['partNames'] = array_map(
+                static fn(array $part): string => $part['shortName'] !== '' ? $part['shortName'] : $part['requirement'],
+                $parts
+            );
             $ordered[] = $requirement;
         }
         return $ordered;
@@ -285,14 +290,40 @@ class ActivityPresenter extends RequirementsPresenter
                 'name' => SecurityUtils::encodeHTML((string) $provider['rqp_name'])
             );
         }
-        $years = array();
+        // The credited-period selection: whole years, plus - where the page was opened from a bar of
+        // the overview whose period is a quarter, a month or a renewal cycle - an entry for exactly
+        // that period, selected. The bar and the dropdowns are thereby one and the same filter.
+        $fromOptions = array();
+        $toOptions = array();
         $range = (new ActivityService($gDb))->creditedYearRange();
         if ($range !== null) {
             for ($year = max($range[1], (int) date('Y')); $year >= $range[0]; $year--) {
-                $years[] = $year;
+                $fromOptions[] = array('value' => $year . '-01-01', 'label' => (string) $year, 'selected' => false);
+                $toOptions[] = array('value' => $year . '-12-31', 'label' => (string) $year, 'selected' => false);
             }
         }
-        $this->assignSmartyVariable('yearOptions', $years);
+        if ($filter['periodRange'] !== null) {
+            $select = static function (array $options, string $bound, string $label): array {
+                // An open end of a renewal cycle is no bound at all.
+                if ($bound === '9999-12-31') {
+                    return $options;
+                }
+                $found = false;
+                foreach ($options as $i => $option) {
+                    if ($option['value'] === $bound) {
+                        $options[$i]['selected'] = $found = true;
+                    }
+                }
+                if (!$found) {
+                    array_unshift($options, array('value' => $bound, 'label' => $label, 'selected' => true));
+                }
+                return $options;
+            };
+            $fromOptions = $select($fromOptions, $filter['periodRange'][0], $filter['periodLabel']);
+            $toOptions = $select($toOptions, $filter['periodRange'][1], $filter['periodLabel']);
+        }
+        $this->assignSmartyVariable('periodFromOptions', $fromOptions);
+        $this->assignSmartyVariable('periodToOptions', $toOptions);
         $this->assignSmartyVariable('query', $query);
         $this->assignSmartyVariable('typeOptions', $typeOptions);
         $this->assignSmartyVariable('providerOptions', $providerOptions);
@@ -355,7 +386,6 @@ class ActivityPresenter extends RequirementsPresenter
             $overview === array() && $allTypes !== array() ? $gL10n->get('PLG_REQUIREMENTS_OVERVIEW_NONE') : ''
         );
 
-        $this->assignSmartyVariable('periodLabel', $filter['periodRange'] === null ? '' : $filter['periodLabel']);
         // One way out of both narrowings: a member filter and a period filter are two halves of the
         // same "I followed a link to get here", and clearing one and not the other only puzzles.
         $this->assignSmartyVariable('clearFilterUrl', $this->pageUrl('index.php', array(
@@ -399,8 +429,6 @@ class ActivityPresenter extends RequirementsPresenter
             'emptyTable' => $gL10n->get('SYS_NO_ENTRIES'),
             'allLabel' => $gL10n->get('SYS_ALL'),
             'user' => $effectiveUserUuid,
-            'period' => $filter['periodRange'] === null ? '' : $period,
-            'periodTo' => $filter['periodRange'] === null ? '' : $periodTo,
             'columns' => array_map(
                 static fn(array $c): array => array('key' => $c['key'], 'sortable' => $c['sortable']),
                 $columns
@@ -518,14 +546,12 @@ class ActivityPresenter extends RequirementsPresenter
                     data: function (d) {
                         d.requirement = $("#adm_req_requirement").val();
                         d.provider = $("#adm_req_provider").val();
-                        d.year_from = $("#adm_req_year_from").val();
-                        d.year_to = $("#adm_req_year_to").val();
+                        d.credited_from = $("#adm_req_period_from").val();
+                        d.credited_to = $("#adm_req_period_to").val();
                         d.query = $("#adm_req_query").val();
                         d.group = $("#adm_req_group").val();
                         d.granularity = $("#adm_req_granularity").val();
                         d.user = admReqConfig.user;
-                        d.period = admReqConfig.period;
-                        d.period_to = admReqConfig.periodTo;
                     }
                 },
                 columns: admReqConfig.columns.map(function (c) {
@@ -558,14 +584,10 @@ class ActivityPresenter extends RequirementsPresenter
                 clearTimeout(admReqQueryTimer);
                 admReqQueryTimer = setTimeout(function () { admReqTable.ajax.reload(); }, 300);
             });
-            $("#adm_req_provider, #adm_req_year_from, #adm_req_year_to").on("change", function () {
+            $("#adm_req_provider, #adm_req_period_from, #adm_req_period_to").on("change", function () {
                 admReqTable.ajax.reload();
             });
             $("#adm_req_requirement").on("change", function () {
-                if (admReqConfig.period !== "") {
-                    window.location.href = admReqConfig.listUrl + "&requirement=" + encodeURIComponent($(this).val());
-                    return;
-                }
                 admReqTable.ajax.reload();
             });
             $("#adm_req_group, #adm_req_granularity").on("change", function () {
@@ -632,8 +654,8 @@ class ActivityPresenter extends RequirementsPresenter
             // overview bar or a review roster is not a field of the bar, so that one is dropped by
             // loading the list without it.
             $("#adm_req_clear_filters").on("click", function () {
-                $("#adm_req_requirement, #adm_req_provider, #adm_req_year_from, #adm_req_year_to, #adm_req_query").val("");
-                if (admReqConfig.period !== "" || admReqConfig.user !== "") {
+                $("#adm_req_requirement, #adm_req_provider, #adm_req_period_from, #adm_req_period_to, #adm_req_query").val("");
+                if (admReqConfig.user !== "") {
                     window.location.href = admReqConfig.baseUrl;
                     return;
                 }
@@ -642,7 +664,7 @@ class ActivityPresenter extends RequirementsPresenter
             // The export takes the filters the table is showing, so the file is the list on screen.
             $(".adm-req-export").on("click", function () {
                 const params = admReqTable.ajax.params();
-                const keep = ["requirement", "provider", "year_from", "year_to", "query", "user", "period", "period_to"];
+                const keep = ["requirement", "provider", "credited_from", "credited_to", "query", "user"];
                 const query = keep.reduce(function (p, k) {
                     p[k] = params[k];
                     return p;
@@ -828,8 +850,8 @@ class ActivityPresenter extends RequirementsPresenter
             'requirementTypeId' => $resolved['type'] === null ? null : (int) $resolved['type']['rqt_id'],
             'periodRange' => $resolved['periodRange'],
             'providerId' => $providerId,
-            'creditedFrom' => (int) $filters['yearFrom'] > 0 ? sprintf('%04d-01-01', (int) $filters['yearFrom']) : '',
-            'creditedTo' => (int) $filters['yearTo'] > 0 ? sprintf('%04d-12-31', (int) $filters['yearTo']) : ''
+            'creditedFrom' => $filters['creditedFrom'],
+            'creditedTo' => $filters['creditedTo']
         );
     }
 

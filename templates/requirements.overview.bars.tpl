@@ -19,13 +19,17 @@
     .adm-req-overview .adm-req-track.has-target { outline: 1px solid var(--bs-secondary-color, #6c757d); }
     .adm-req-overview .adm-req-bar-link:hover .adm-req-track { outline: 2px solid var(--bs-primary, #0d6efd); }
     .adm-req-overview .adm-req-pending { font-size: .7rem; font-style: italic; color: var(--bs-secondary-color, #6c757d); }
-    .adm-req-overview .adm-req-track.adm-req-part-track { height: .95rem; margin-top: 2px; }
-    .adm-req-overview .adm-req-part-track .adm-req-val { font-size: .68rem; }
+    .adm-req-overview .adm-req-row.has-parts { border-bottom: 0; padding-bottom: .1rem; }
+    .adm-req-overview .adm-req-subrow { padding: .1rem 0 .35rem; }
+    .adm-req-overview .adm-req-subrow.not-last { border-bottom: 0; padding-bottom: .1rem; }
+    .adm-req-overview .adm-req-subrow .adm-req-name { padding-left: 1.25rem; font-weight: 400; }
+    .adm-req-overview .adm-req-track.adm-req-part-track { height: 1rem; }
+    .adm-req-overview .adm-req-part-track .adm-req-val { font-size: .7rem; }
     .adm-req-overview.adm-req-compact .adm-req-row { flex-direction: column; align-items: stretch; gap: .25rem; }
     .adm-req-overview.adm-req-compact .adm-req-name { flex: none; }
 </style>
 {foreach $overview as $req}
-    <div class="adm-req-row">
+    <div class="adm-req-row{if $req.partNames|@count gt 0} has-parts{/if}">
         <div class="adm-req-name" title="{$req.requirement}">
             {if $req.shortName}{$req.shortName}{else}{$req.requirement}{/if}
             {if $req.own}<i class="bi bi-person-check text-muted" data-bs-toggle="tooltip" title="{$l10n->get('PLG_REQUIREMENTS_OWN_REQUIREMENT')}"></i>{/if}
@@ -35,13 +39,6 @@
             {foreach $req.periods as $p}
                 <div class="adm-req-bar">
                     {include 'requirements.overview.track.tpl' p=$p label=true name=''}
-                    {foreach $p.parts as $part}
-                        {if $part.period}
-                            {include 'requirements.overview.track.tpl' p=$part.period label=false name=$part.name}
-                        {else}
-                            <div class="adm-req-track adm-req-part-track"><div class="adm-req-val adm-req-val-in">{$part.name}: &ndash;</div></div>
-                        {/if}
-                    {/foreach}
                     {if $p.pending gt 0}
                         <div class="adm-req-pending">{$l10n->get('PLG_REQUIREMENTS_PENDING', [$p.pending])}</div>
                     {/if}
@@ -49,4 +46,20 @@
             {/foreach}
         </div>
     </div>
+    {foreach $req.partNames as $k => $partName}
+        <div class="adm-req-row adm-req-subrow{if not $partName@last} not-last{/if}">
+            <div class="adm-req-name" title="{$partName}"><i class="bi bi-arrow-return-right text-muted"></i> {$partName}</div>
+            <div class="adm-req-bars">
+                {foreach $req.periods as $p}
+                    <div class="adm-req-bar">
+                        {if $p.parts[$k].period}
+                            {include 'requirements.overview.track.tpl' p=$p.parts[$k].period label=false name=''}
+                        {else}
+                            <div class="adm-req-track adm-req-part-track"><div class="adm-req-val adm-req-val-in">&ndash;</div></div>
+                        {/if}
+                    </div>
+                {/foreach}
+            </div>
+        </div>
+    {/foreach}
 {/foreach}

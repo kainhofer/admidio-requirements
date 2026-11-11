@@ -82,17 +82,17 @@
                 </select>
             </div>
             <div class="col-6 col-lg-auto">
-                <label class="form-label small mb-1" for="adm_req_year_from">{$l10n->get('PLG_REQUIREMENTS_PERIOD_FROM')}</label>
-                <select id="adm_req_year_from" class="form-select">
+                <label class="form-label small mb-1" for="adm_req_period_from">{$l10n->get('PLG_REQUIREMENTS_PERIOD_FROM')}</label>
+                <select id="adm_req_period_from" class="form-select">
                     <option value="">&nbsp;</option>
-                    {foreach $yearOptions as $y}<option value="{$y}">{$y}</option>{/foreach}
+                    {foreach $periodFromOptions as $o}<option value="{$o.value}"{if $o.selected} selected{/if}>{$o.label}</option>{/foreach}
                 </select>
             </div>
             <div class="col-6 col-lg-auto">
-                <label class="form-label small mb-1" for="adm_req_year_to">{$l10n->get('PLG_REQUIREMENTS_PERIOD_TO')}</label>
-                <select id="adm_req_year_to" class="form-select">
+                <label class="form-label small mb-1" for="adm_req_period_to">{$l10n->get('PLG_REQUIREMENTS_PERIOD_TO')}</label>
+                <select id="adm_req_period_to" class="form-select">
                     <option value="">&nbsp;</option>
-                    {foreach $yearOptions as $y}<option value="{$y}">{$y}</option>{/foreach}
+                    {foreach $periodToOptions as $o}<option value="{$o.value}"{if $o.selected} selected{/if}>{$o.label}</option>{/foreach}
                 </select>
             </div>
             <div class="col-sm-12 col-lg">
@@ -107,11 +107,11 @@
     </div>
 </div>
 
-{if $periodLabel or $userLabel}
+{if $userLabel}
     <div class="alert alert-secondary d-flex justify-content-between align-items-center" role="alert">
         <span><i class="bi bi-funnel-fill"></i>
             {if $userLabel}{$l10n->get('PLG_REQUIREMENTS_CONTRIBUTIONS_OF', [$userLabel])} {/if}
-            {if $periodLabel}{$l10n->get('PLG_REQUIREMENTS_CONTRIBUTIONS_TO', [$periodLabel])}{/if}</span>
+        </span>
         <a href="{$clearFilterUrl}" class="btn btn-sm btn-secondary">
             {$l10n->get('PLG_REQUIREMENTS_SHOW_ALL')}</a>
     </div>
