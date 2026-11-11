@@ -44,6 +44,7 @@ final class RequirementTypeService
         $this->db->startTransaction();
         try {
             $type->save();
+            $this->syncPartPeriods($type);
             $this->db->endTransaction();
         } catch (Throwable $exception) {
             $this->db->rollback();
@@ -60,6 +61,57 @@ final class RequirementTypeService
     {
         $owner = (int) $type->getValue('rqt_usr_id');
         return $owner > 0 ? $owner : null;
+    }
+
+    /**
+     * The parent a requirement type may be made part of: a requirement of the same owner that is
+     * not itself a part of another one, and the type must not have parts of its own - one level only.
+     *
+     * @throws Exception
+     */
+    private function assertValidParent(RequirementType $type, int $parentId): RequirementType
+    {
+        global $gCurrentOrgId;
+
+        $parent = new RequirementType($this->db, $parentId);
+        $typeId = (int)$type->getValue('rqt_id');
+        if ((int)$parent->getValue('rqt_id') === 0
+            || (int)$parent->getValue('rqt_org_id') !== (int)$gCurrentOrgId
+            || $parentId === $typeId
+            || (int)$parent->getValue('rqt_parent_id') > 0
+            || self::ownerOf($parent) !== self::ownerOf($type)) {
+            throw new Exception('PLG_REQUIREMENTS_PARENT_INVALID');
+        }
+        if ($typeId > 0 && $this->countParts($typeId) > 0) {
+            throw new Exception('PLG_REQUIREMENTS_PARENT_INVALID');
+        }
+        return $parent;
+    }
+
+    private function countParts(int $typeId): int
+    {
+        return (int)$this->db->queryPrepared(
+            'SELECT COUNT(*) FROM ' . RequirementsTables::requirementTypes() . ' WHERE rqt_parent_id = ?',
+            array($typeId)
+        )->fetchColumn();
+    }
+
+    /**
+     * The parts of a requirement take over its period whenever the requirement changes it.
+     */
+    private function syncPartPeriods(RequirementType $parent): void
+    {
+        $this->db->queryPrepared(
+            'UPDATE ' . RequirementsTables::requirementTypes() . '
+                SET rqt_period_unit = ?, rqt_period_anchor = ?, rqt_period_count = ?
+              WHERE rqt_parent_id = ?',
+            array(
+                (string)$parent->getValue('rqt_period_unit'),
+                (string)$parent->getValue('rqt_period_anchor'),
+                (int)$parent->getValue('rqt_period_count'),
+                (int)$parent->getValue('rqt_id')
+            )
+        );
     }
 
     /**
@@ -91,6 +143,17 @@ final class RequirementTypeService
             || $count < 1 || $count > 10) {
             throw new Exception('SYS_INVALID_PAGE_VIEW');
         }
+        // A sub-requirement is a part of its parent and therefore lives in the parent's periods.
+        $parentId = array_key_exists('rqt_parent_id', $values)
+            ? ((int)$values['rqt_parent_id'] > 0 ? (int)$values['rqt_parent_id'] : null)
+            : ($type->getValue('rqt_parent_id') ? (int)$type->getValue('rqt_parent_id') : null);
+        if ($parentId !== null) {
+            $parent = $this->assertValidParent($type, $parentId);
+            $unit = (string)$parent->getValue('rqt_period_unit');
+            $anchor = (string)$parent->getValue('rqt_period_anchor');
+            $count = (int)$parent->getValue('rqt_period_count');
+        }
+        $type->setValue('rqt_parent_id', $parentId);
         $type->setValue('rqt_period_unit', $unit);
         $type->setValue('rqt_period_anchor', $anchor);
         $type->setValue('rqt_multiple_roles_mode', $multipleMode);
@@ -234,7 +297,7 @@ final class RequirementTypeService
     {
         global $gCurrentOrgId;
 
-        $sql = 'SELECT rqt_id, rqt_uuid, rqt_usr_id, rqt_name, rqt_short_name, rqt_description,
+        $sql = 'SELECT rqt_id, rqt_uuid, rqt_usr_id, rqt_parent_id, rqt_name, rqt_short_name, rqt_description,
                        rqt_period_unit, rqt_period_count, rqt_period_anchor,
                        rqt_multiple_roles_mode, rqt_active, rqt_sequence
                   FROM ' . RequirementsTables::requirementTypes() . '
@@ -326,6 +389,11 @@ final class RequirementTypeService
         )->fetchColumn();
         if ($credits > 0) {
             throw new Exception('PLG_REQUIREMENTS_REQUIREMENT_HAS_CREDITS', array($credits));
+        }
+
+        $parts = $this->countParts((int) $type->getValue('rqt_id'));
+        if ($parts > 0) {
+            throw new Exception('PLG_REQUIREMENTS_REQUIREMENT_HAS_PARTS', array($parts));
         }
 
         $this->db->startTransaction();

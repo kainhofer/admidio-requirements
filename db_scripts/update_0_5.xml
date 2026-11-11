@@ -4,11 +4,16 @@
 
     A rule without a role names the member it applies to in rrr_usr_id. The rules of members own
     requirements, which 0.4 tied to the owner of their type, take that owner.
+
+    Sub-requirements: a requirement type may name a parent, whose credits it is a part of.
 -->
 <update>
     <step id="10" error="ignore">ALTER TABLE %PREFIX%_req_requirement_role_rules ADD COLUMN rrr_usr_id integer unsigned NULL</step>
     <step id="20" error="ignore">CREATE INDEX %PREFIX%_idx_rrr_usr ON %PREFIX%_req_requirement_role_rules (rrr_usr_id)</step>
     <step id="30" error="ignore">ALTER TABLE %PREFIX%_req_requirement_role_rules ADD CONSTRAINT %PREFIX%_fk_rrr_usr FOREIGN KEY (rrr_usr_id) REFERENCES %PREFIX%_users (usr_id) ON DELETE CASCADE ON UPDATE RESTRICT</step>
     <step id="40">UPDATE %PREFIX%_req_requirement_role_rules SET rrr_usr_id = (SELECT rqt_usr_id FROM %PREFIX%_req_requirement_types WHERE rqt_id = rrr_requirement_type_id) WHERE rrr_role_id IS NULL AND rrr_usr_id IS NULL</step>
+    <step id="50" error="ignore">ALTER TABLE %PREFIX%_req_requirement_types ADD COLUMN rqt_parent_id integer unsigned NULL</step>
+    <step id="60" error="ignore">CREATE INDEX %PREFIX%_idx_rqt_parent ON %PREFIX%_req_requirement_types (rqt_parent_id)</step>
+    <step id="70" error="ignore">ALTER TABLE %PREFIX%_req_requirement_types ADD CONSTRAINT %PREFIX%_fk_rqt_parent FOREIGN KEY (rqt_parent_id) REFERENCES %PREFIX%_req_requirement_types (rqt_id) ON DELETE RESTRICT ON UPDATE RESTRICT</step>
     <step>stop</step>
 </update>

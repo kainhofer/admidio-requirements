@@ -19,6 +19,8 @@
     .adm-req-overview .adm-req-track.has-target { outline: 1px solid var(--bs-secondary-color, #6c757d); }
     .adm-req-overview .adm-req-bar-link:hover .adm-req-track { outline: 2px solid var(--bs-primary, #0d6efd); }
     .adm-req-overview .adm-req-pending { font-size: .7rem; font-style: italic; color: var(--bs-secondary-color, #6c757d); }
+    .adm-req-overview .adm-req-track.adm-req-part-track { height: .95rem; margin-top: 2px; }
+    .adm-req-overview .adm-req-part-track .adm-req-val { font-size: .68rem; }
     .adm-req-overview.adm-req-compact .adm-req-row { flex-direction: column; align-items: stretch; gap: .25rem; }
     .adm-req-overview.adm-req-compact .adm-req-name { flex: none; }
 </style>
@@ -32,28 +34,17 @@
             {if $req.periods|@count eq 0}<div class="adm-req-val">&ndash;</div>{/if}
             {foreach $req.periods as $p}
                 <div class="adm-req-bar">
-                    {if $p.url}<a class="adm-req-bar-link" href="{$p.url}"
-                        title="{$l10n->get('PLG_REQUIREMENTS_SHOW_CONTRIBUTIONS')}">{/if}
-                    <div class="adm-req-bar-label">{$p.label}</div>
-                    <div class="adm-req-track{if $p.required is not null} has-target{/if}">
-                        {if $p.percent is not null}
-                            <div class="adm-req-fill {if $p.status eq 'fulfilled'}ok{elseif $p.status eq 'overdue' or $p.status eq 'never-fulfilled'}over{elseif $p.status eq 'missing'}miss{else}none{/if}"
-                                 style="width: {$p.percent}%;"></div>
+                    {include 'requirements.overview.track.tpl' p=$p label=true name=''}
+                    {foreach $p.parts as $part}
+                        {if $part.period}
+                            {include 'requirements.overview.track.tpl' p=$part.period label=false name=$part.name}
+                        {else}
+                            <div class="adm-req-track adm-req-part-track"><div class="adm-req-val adm-req-val-in">{$part.name}: &ndash;</div></div>
                         {/if}
-                        <div class="adm-req-val adm-req-val-in">
-                            {if $p.required is not null}
-                                {$p.attained} / {$p.required}{if $p.percent is not null} ({$p.percent}%){/if}
-                            {elseif $p.attained gt 0}
-                                {$p.attained}
-                            {else}
-                                &ndash;
-                            {/if}
-                        </div>
-                    </div>
+                    {/foreach}
                     {if $p.pending gt 0}
                         <div class="adm-req-pending">{$l10n->get('PLG_REQUIREMENTS_PENDING', [$p.pending])}</div>
                     {/if}
-                    {if $p.url}</a>{/if}
                 </div>
             {/foreach}
         </div>

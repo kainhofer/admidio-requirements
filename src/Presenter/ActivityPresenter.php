@@ -36,7 +36,12 @@ class ActivityPresenter extends RequirementsPresenter
     public static function linkOverview(array $overview, array $types, Plugin $plugin): array
     {
         $uuids = array_column($types, 'rqt_uuid', 'rqt_id');
+        $parents = array_column($types, 'rqt_parent_id', 'rqt_id');
+        $present = array_column($overview, 'typeId');
         foreach ($overview as $i => $requirement) {
+            // A part is shown under its parent, indented, once the parent is part of the overview too.
+            $parentId = (int) ($parents[$requirement['typeId']] ?? 0);
+            $overview[$i]['parentId'] = in_array($parentId, $present, true) ? $parentId : 0;
             $uuid = (string) ($uuids[$requirement['typeId']] ?? '');
             foreach ($requirement['periods'] as $j => $periodRow) {
                 $overview[$i]['periods'][$j]['url'] = $uuid === '' || $periodRow['periodReference'] === null
@@ -49,7 +54,38 @@ class ActivityPresenter extends RequirementsPresenter
                     ), static fn($value): bool => $value !== ''));
             }
         }
-        return $overview;
+
+        // A part has the period of its parent, so it has no row and no period heading of its own: its
+        // bar sits directly under the parent's bar of the same period, named inside the bar.
+        $ordered = array();
+        foreach ($overview as $requirement) {
+            if ($requirement['parentId'] > 0) {
+                continue;
+            }
+            $parts = array_values(array_filter(
+                $overview,
+                static fn(array $part): bool => $part['parentId'] === $requirement['typeId']
+            ));
+            foreach ($requirement['periods'] as $j => $periodRow) {
+                $requirement['periods'][$j]['parts'] = array();
+                foreach ($parts as $part) {
+                    $match = null;
+                    foreach ($part['periods'] as $partPeriod) {
+                        if ($partPeriod['periodReference'] !== null
+                            && $partPeriod['periodReference'] === $periodRow['periodReference']) {
+                            $match = $partPeriod;
+                            break;
+                        }
+                    }
+                    $requirement['periods'][$j]['parts'][] = array(
+                        'name' => $part['shortName'] !== '' ? $part['shortName'] : $part['requirement'],
+                        'period' => $match
+                    );
+                }
+            }
+            $ordered[] = $requirement;
+        }
+        return $ordered;
     }
 
     private static function currentUserId(): int
@@ -1114,6 +1150,7 @@ class ActivityPresenter extends RequirementsPresenter
 
             $creditFields[] = array(
                 'typeId' => $typeId,
+                'parentId' => (int) $type['rqt_parent_id'],
                 'name' => SecurityUtils::encodeHTML((string) $type['rqt_name']),
                 'shown' => $shown,
                 'isNew' => $current === null,
@@ -1135,6 +1172,32 @@ class ActivityPresenter extends RequirementsPresenter
                 $optionalCreditTypes[$typeId] = SecurityUtils::encodeHTML((string) $type['rqt_name']);
             }
         }
+        // A sub-requirement is entered as "thereof" under its parent: the rows follow their parent,
+        // and a parent whose part is on show is on show as well, so that the part has something to be a part of.
+        $shownParts = array();
+        foreach ($creditFields as $field) {
+            if ($field['parentId'] > 0 && $field['shown']) {
+                $shownParts[$field['parentId']] = true;
+            }
+        }
+        $ordered = array();
+        foreach ($creditFields as $field) {
+            if ($field['parentId'] > 0) {
+                continue;
+            }
+            if (isset($shownParts[$field['typeId']]) && !$field['shown']) {
+                $field['shown'] = true;
+                unset($optionalCreditTypes[$field['typeId']]);
+            }
+            $ordered[] = $field;
+            foreach ($creditFields as $part) {
+                if ($part['parentId'] === $field['typeId']) {
+                    $ordered[] = $part;
+                }
+            }
+        }
+        // A part whose parent is not creditable here (inactive, or foreign) is left out of the form.
+        $creditFields = $ordered;
         $this->assignSmartyVariable('optionalCreditTypes', $optionalCreditTypes);
 
         // The credited period follows the dates of the activity until the member sets it: a period
@@ -1189,6 +1252,12 @@ class ActivityPresenter extends RequirementsPresenter
                 var id = $(this).val();
                 if (id === "") { return; }
                 var row = $("#adm_req_credit_" + id).prop("hidden", false);
+                var parent = row.attr("data-parent");
+                if (parent) {
+                    // A part is entered under its parent, which therefore has to be on show.
+                    $("#adm_req_credit_" + parent).prop("hidden", false);
+                    $(this).find("option[value=\'" + parent + "\']").remove();
+                }
                 var period = row.find(".adm-req-period");
                 var v = admReqActivityDate();
                 if (v !== "" && (period.val() === "" || period.is("[data-auto]"))) {

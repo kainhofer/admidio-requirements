@@ -31,6 +31,9 @@ final class ActivityService
     public const STATUSES = array('draft', 'submitted', 'withdrawn');
     public const REVIEW_STATUSES = array('', 'open', 'accepted', 'partially_accepted', 'not_accepted', 'clarification');
 
+    /** Nesting depth of credit writes whose sub-requirement check waits for the end of the batch. */
+    private int $deferredChecks = 0;
+
     public function __construct(private readonly Database $db)
     {
     }
@@ -137,6 +140,7 @@ final class ActivityService
         ?int $targetUserId = null
     ): Activity {
         $this->db->startTransaction();
+        ++$this->deferredChecks;
         try {
             $this->save($activity, $values, $targetUserId);
 
@@ -156,13 +160,81 @@ final class ActivityService
                 $this->syncCredit($activity, $type, $periodDate, $input['claimed'], $input['accepted']);
             }
 
+            // Whatever order the rows came in, the parts have to fit their parents once all are written.
+            $this->assertSubRequirements($activity);
             $this->db->endTransaction();
         } catch (Throwable $exception) {
             $this->db->rollback();
             throw $exception;
+        } finally {
+            --$this->deferredChecks;
         }
 
         return $activity;
+    }
+
+    /**
+     * Run a series of credit writes of one activity as one unit, and check the sub-requirements
+     * once at the end instead of after every row - a part may be written before its parent.
+     *
+     * @throws Exception
+     */
+    public function withinCreditBatch(Activity $activity, callable $writes): void
+    {
+        $this->db->startTransaction();
+        ++$this->deferredChecks;
+        try {
+            $writes();
+            $this->assertSubRequirements($activity);
+            $this->db->endTransaction();
+        } catch (Throwable $exception) {
+            $this->db->rollback();
+            throw $exception;
+        } finally {
+            --$this->deferredChecks;
+        }
+    }
+
+    /**
+     * A sub-requirement is a part of its parent: on the same activity and in the same period its
+     * credits need a parent credit, and neither the claimed nor the effective accepted amount of
+     * the part may exceed that of the parent ("25 hours recognised, 15 of them in person").
+     *
+     * @throws Exception
+     */
+    public function assertSubRequirements(Activity $activity): void
+    {
+        $rows = $this->db->getArrayFromSql(
+            'SELECT rac.rac_requirement_type_id, rac.rac_period_reference,
+                    rac.rac_credits_claimed, rac.rac_credits_accepted,
+                    rqt.rqt_parent_id, rqt.rqt_name, rpt.rqt_name AS parent_name
+               FROM ' . RequirementsTables::activityCredits() . ' AS rac
+         INNER JOIN ' . RequirementsTables::requirementTypes() . ' AS rqt ON rqt.rqt_id = rac.rac_requirement_type_id
+          LEFT JOIN ' . RequirementsTables::requirementTypes() . ' AS rpt ON rpt.rqt_id = rqt.rqt_parent_id
+              WHERE rac.rac_activity_id = ?',
+            array((int) $activity->getValue('rqa_id'))
+        );
+
+        $byKey = array();
+        foreach ($rows as $row) {
+            $byKey[$row['rac_requirement_type_id'] . '|' . $row['rac_period_reference']] = $row;
+        }
+        $effective = static fn(array $row): float => $row['rac_credits_accepted'] === null
+            ? (float) $row['rac_credits_claimed'] : (float) $row['rac_credits_accepted'];
+
+        foreach ($rows as $row) {
+            if ((int) $row['rqt_parent_id'] === 0) {
+                continue;
+            }
+            $parent = $byKey[$row['rqt_parent_id'] . '|' . $row['rac_period_reference']] ?? null;
+            if ($parent === null) {
+                throw new Exception('PLG_REQUIREMENTS_THEREOF_NEEDS_PARENT', array($row['rqt_name'], $row['parent_name']));
+            }
+            if ((float) $row['rac_credits_claimed'] > (float) $parent['rac_credits_claimed'] + 0.005
+                || $effective($row) > $effective($parent) + 0.005) {
+                throw new Exception('PLG_REQUIREMENTS_THEREOF_EXCEEDS', array($row['rqt_name'], $row['parent_name']));
+            }
+        }
     }
 
     public function saveCredit(
@@ -224,6 +296,9 @@ final class ActivityService
         $this->db->startTransaction();
         try {
             $credit->save();
+            if ($this->deferredChecks === 0) {
+                $this->assertSubRequirements($activity);
+            }
             $this->db->endTransaction();
         } catch (Throwable $exception) {
             $this->db->rollback();
@@ -616,7 +691,9 @@ final class ActivityService
         }
 
         $changed = 0;
+        $touched = array();
         $this->db->startTransaction();
+        ++$this->deferredChecks;
         try {
             foreach ($accepted as $creditId => $value) {
                 // OrganizationScope answers a credit of another organization with an empty record.
@@ -640,12 +717,18 @@ final class ActivityService
                     (float) $credit->getValue('rac_credits_claimed', 'database'),
                     $value
                 );
+                $touched[(int) $credit->getValue('rac_activity_id')] = true;
                 ++$changed;
+            }
+            foreach (array_keys($touched) as $activityId) {
+                $this->assertSubRequirements(new Activity($this->db, $activityId));
             }
             $this->db->endTransaction();
         } catch (Throwable $exception) {
             $this->db->rollback();
             throw $exception;
+        } finally {
+            --$this->deferredChecks;
         }
 
         return $changed;
@@ -672,6 +755,9 @@ final class ActivityService
         $this->db->startTransaction();
         try {
             $credit->delete();
+            if ($this->deferredChecks === 0) {
+                $this->assertSubRequirements($activity);
+            }
             $this->db->endTransaction();
         } catch (Throwable $exception) {
             $this->db->rollback();

@@ -141,6 +141,9 @@
   <string name="PLG_REQUIREMENTS_OWN_TARGET">Own target</string>
   <string name="PLG_REQUIREMENTS_OWN_TARGET_ADD">Set own target for a requirement</string>
   <string name="PLG_REQUIREMENTS_OWN_TARGET_HELP">A requirement of the organization that applies to you through your work rather than through one of your roles, for example the IDD hours of your employer. Your target is combined with any role rule of the requirement as if it were one more role.</string>
+  <string name="PLG_REQUIREMENTS_PARENT_INVALID">A requirement can only be part of a requirement of the organization that is not itself a part of another one, and a requirement that has parts cannot become a part.</string>
+  <string name="PLG_REQUIREMENTS_PARENT_REQUIREMENT">Part of requirement</string>
+  <string name="PLG_REQUIREMENTS_PARENT_REQUIREMENT_HELP">A sub-requirement is a part of another requirement, for example &quot;in person&quot; hours of a continuing-education requirement. Its credits are entered as &quot;thereof&quot; under the credits of the parent on the same activity, in the same period, and can never exceed them - also not the accepted ones. It takes over the period of its parent and has role rules of its own.</string>
   <string name="PLG_REQUIREMENTS_PARTIAL_FULL">Full amount regardless of partial membership</string>
   <string name="PLG_REQUIREMENTS_PARTIAL_PERIOD_MODE">Partial period</string>
   <string name="PLG_REQUIREMENTS_PARTIAL_PRO_RATA">Pro rata to the qualifying membership</string>
@@ -153,6 +156,7 @@
   <string name="PLG_REQUIREMENTS_PERIOD_COUNT">Period count</string>
   <string name="PLG_REQUIREMENTS_PERIOD_COUNT_HELP">Number of period units. Calendar periods currently support the value 1 only.</string>
   <string name="PLG_REQUIREMENTS_PERIOD_MONTH">Month</string>
+  <string name="PLG_REQUIREMENTS_PERIOD_OF_PARENT">as the requirement above</string>
   <string name="PLG_REQUIREMENTS_PERIOD_QUARTER">Quarter</string>
   <string name="PLG_REQUIREMENTS_PERIOD_RECURRING">Every #VAR1#, from the last fulfilment</string>
   <string name="PLG_REQUIREMENTS_PERIOD_UNIT">Period unit</string>
@@ -179,6 +183,7 @@
   <string name="PLG_REQUIREMENTS_REQUIRED_CREDITS">Required credits</string>
   <string name="PLG_REQUIREMENTS_REQUIREMENT_ACTIVE_HELP">An inactive requirement type is no longer offered for new configuration but existing obligations keep being calculated.</string>
   <string name="PLG_REQUIREMENTS_REQUIREMENT_HAS_CREDITS">This requirement type still has #VAR1# credited contributions and cannot be deleted. Deactivate it instead, or remove the contributions first.</string>
+  <string name="PLG_REQUIREMENTS_REQUIREMENT_HAS_PARTS">This requirement still has #VAR1# sub-requirements and cannot be deleted. Delete or detach them first.</string>
   <string name="PLG_REQUIREMENTS_REQUIREMENT_SHORT_NAME_DUPLICATE">This requirement short name is already used in the current organization.</string>
   <string name="PLG_REQUIREMENTS_REQUIREMENT_SHORT_NAME_HELP">Optional abbreviation used in imports, reports and the fulfilment overview.</string>
   <string name="PLG_REQUIREMENTS_REQUIREMENT_TYPE">Requirement type</string>
@@ -216,6 +221,10 @@
   <string name="PLG_REQUIREMENTS_STATUS_WITHDRAWN">Withdrawn</string>
   <string name="PLG_REQUIREMENTS_SUBMIT">Submit for review</string>
   <string name="PLG_REQUIREMENTS_SUBMIT_CONFIRM">Do you want to submit the activity &quot;#VAR1#&quot; for review? Depending on the organization settings you may no longer be able to change it afterwards.</string>
+  <string name="PLG_REQUIREMENTS_SUB_REQUIREMENTS">Sub-requirements</string>
+  <string name="PLG_REQUIREMENTS_THEREOF">Thereof</string>
+  <string name="PLG_REQUIREMENTS_THEREOF_EXCEEDS">The credits for &quot;#VAR1#&quot; cannot exceed those for &quot;#VAR2#&quot; on the same activity, because they are a part of them.</string>
+  <string name="PLG_REQUIREMENTS_THEREOF_NEEDS_PARENT">Credits for &quot;#VAR1#&quot; are part of the credits for &quot;#VAR2#&quot;: enter those for the same period on the same activity as well.</string>
   <string name="PLG_REQUIREMENTS_VALIDITY">Validity</string>
   <string name="PLG_REQUIREMENTS_VALID_FROM">Valid from</string>
   <string name="PLG_REQUIREMENTS_VALID_UNTIL">Valid until</string>

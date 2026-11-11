@@ -93,6 +93,7 @@ CREATE TABLE %PREFIX%_req_requirement_types
     rqt_uuid                varchar(36)      NOT NULL,
     rqt_org_id              integer unsigned NOT NULL,
     rqt_usr_id              integer unsigned NULL,
+    rqt_parent_id           integer unsigned NULL,
     rqt_name                varchar(255)     NOT NULL,
     rqt_short_name          varchar(255)     NULL,
     rqt_description         text             NULL,
@@ -118,6 +119,9 @@ CREATE INDEX %PREFIX%_idx_rqt_org_short_name ON %PREFIX%_req_requirement_types (
 /* A type with an owner is a requirement that member tracks for themselves, seen by nobody else.
    Its target is a rule without a role, which applies to the owner. */
 CREATE INDEX %PREFIX%_idx_rqt_usr ON %PREFIX%_req_requirement_types (rqt_usr_id);
+/* A sub-requirement is a part of its parent: its credits are part of the parent credit of the
+   same activity, in the same period. One level only. */
+CREATE INDEX %PREFIX%_idx_rqt_parent ON %PREFIX%_req_requirement_types (rqt_parent_id);
 
 CREATE TABLE %PREFIX%_req_requirement_role_rules
 (
@@ -206,6 +210,7 @@ ALTER TABLE %PREFIX%_req_activities
 
 ALTER TABLE %PREFIX%_req_requirement_types
     ADD CONSTRAINT %PREFIX%_fk_rqt_org FOREIGN KEY (rqt_org_id) REFERENCES %PREFIX%_organizations (org_id) ON DELETE RESTRICT ON UPDATE RESTRICT,
+    ADD CONSTRAINT %PREFIX%_fk_rqt_parent FOREIGN KEY (rqt_parent_id) REFERENCES %PREFIX%_req_requirement_types (rqt_id) ON DELETE RESTRICT ON UPDATE RESTRICT,
     ADD CONSTRAINT %PREFIX%_fk_rqt_usr FOREIGN KEY (rqt_usr_id) REFERENCES %PREFIX%_users (usr_id) ON DELETE CASCADE ON UPDATE RESTRICT,
     ADD CONSTRAINT %PREFIX%_fk_rqt_usr_create FOREIGN KEY (rqt_usr_id_create) REFERENCES %PREFIX%_users (usr_id) ON DELETE SET NULL ON UPDATE RESTRICT,
     ADD CONSTRAINT %PREFIX%_fk_rqt_usr_change FOREIGN KEY (rqt_usr_id_change) REFERENCES %PREFIX%_users (usr_id) ON DELETE SET NULL ON UPDATE RESTRICT;

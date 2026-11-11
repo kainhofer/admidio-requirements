@@ -187,6 +187,17 @@ try {
                 );
             }
 
+            // A part ("thereof in person") has no period control of its own: it is credited to the
+            // period of its parent, which is the one of the same activity.
+            foreach ((new RequirementTypeService($gDb))->findTypes('', $ownerId) as $typeRow) {
+                $partId = (int) $typeRow['rqt_id'];
+                $parentId = (int) $typeRow['rqt_parent_id'];
+                if ($parentId > 0 && isset($creditInput[$partId])) {
+                    $creditInput[$partId]['period'] = $creditInput[$parentId]['period'] ?? '';
+                    $creditInput[$partId]['quarter'] = $creditInput[$parentId]['quarter'] ?? '';
+                }
+            }
+
             $activityService->saveWithCredits($activity, $values, $creditInput);
 
             // The certificates are attached only now, because a new activity has no id until the

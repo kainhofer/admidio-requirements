@@ -141,6 +141,9 @@
   <string name="PLG_REQUIREMENTS_OWN_TARGET">Eigene Vorgabe</string>
   <string name="PLG_REQUIREMENTS_OWN_TARGET_ADD">Eigene Vorgabe für eine Anforderung festlegen</string>
   <string name="PLG_REQUIREMENTS_OWN_TARGET_HELP">Eine Anforderung der Organisation, die für dich nicht über eine deiner Rollen, sondern über deinen Beruf gilt, zum Beispiel die IDD-Stunden deines Arbeitgebers. Deine Vorgabe wird mit den Rollenregeln der Anforderung kombiniert, als wäre sie eine weitere Rolle.</string>
+  <string name="PLG_REQUIREMENTS_PARENT_INVALID">Eine Anforderung kann nur Teil einer Anforderung der Organisation sein, die nicht selbst Teil einer anderen ist, und eine Anforderung mit Unter-Anforderungen kann nicht selbst Teil werden.</string>
+  <string name="PLG_REQUIREMENTS_PARENT_REQUIREMENT">Teil der Anforderung</string>
+  <string name="PLG_REQUIREMENTS_PARENT_REQUIREMENT_HELP">Eine Unter-Anforderung ist ein Teil einer anderen Anforderung, z. B. die Präsenzstunden einer Weiterbildungsanforderung. Ihre Punkte werden als &quot;davon&quot; unter den Punkten der übergeordneten Anforderung derselben Aktivität im selben Zeitraum erfasst und dürfen diese nie übersteigen, auch nicht die anerkannten. Sie übernimmt den Zeitraum der übergeordneten Anforderung und hat eigene Rollenregeln.</string>
   <string name="PLG_REQUIREMENTS_PARTIAL_FULL">Voller Betrag unabhängig von Teilmitgliedschaft</string>
   <string name="PLG_REQUIREMENTS_PARTIAL_PERIOD_MODE">Teilzeitraum</string>
   <string name="PLG_REQUIREMENTS_PARTIAL_PRO_RATA">Anteilig zur zutreffenden Mitgliedschaft</string>
@@ -153,6 +156,7 @@
   <string name="PLG_REQUIREMENTS_PERIOD_COUNT">Zeitraum-Anzahl</string>
   <string name="PLG_REQUIREMENTS_PERIOD_COUNT_HELP">Anzahl der Zeiteinheiten. Kalenderzeiträume unterstützen derzeit nur den Wert 1.</string>
   <string name="PLG_REQUIREMENTS_PERIOD_MONTH">Monat</string>
+  <string name="PLG_REQUIREMENTS_PERIOD_OF_PARENT">wie die Anforderung darüber</string>
   <string name="PLG_REQUIREMENTS_PERIOD_QUARTER">Quartal</string>
   <string name="PLG_REQUIREMENTS_PERIOD_RECURRING">Alle #VAR1#, ab der letzten Erfüllung</string>
   <string name="PLG_REQUIREMENTS_PERIOD_UNIT">Zeiteinheit</string>
@@ -179,6 +183,7 @@
   <string name="PLG_REQUIREMENTS_REQUIRED_CREDITS">Erforderliche Punkte</string>
   <string name="PLG_REQUIREMENTS_REQUIREMENT_ACTIVE_HELP">Ein inaktiver Anforderungstyp wird nicht mehr für neue Konfigurationen angeboten, bestehende Verpflichtungen werden aber weiter berechnet.</string>
   <string name="PLG_REQUIREMENTS_REQUIREMENT_HAS_CREDITS">Zu diesem Anforderungstyp gibt es noch #VAR1# angerechnete Beiträge, er kann daher nicht gelöscht werden. Deaktiviere ihn stattdessen oder entferne zuerst die Beiträge.</string>
+  <string name="PLG_REQUIREMENTS_REQUIREMENT_HAS_PARTS">Diese Anforderung hat noch #VAR1# Unter-Anforderungen und kann nicht gelöscht werden. Lösche oder löse diese zuerst.</string>
   <string name="PLG_REQUIREMENTS_REQUIREMENT_SHORT_NAME_DUPLICATE">Dieser Anforderungs-Kurzname wird in der aktuellen Organisation bereits verwendet.</string>
   <string name="PLG_REQUIREMENTS_REQUIREMENT_SHORT_NAME_HELP">Optionale Abkürzung für Importe, Berichte und die Erfüllungsübersicht.</string>
   <string name="PLG_REQUIREMENTS_REQUIREMENT_TYPE">Anforderungstyp</string>
@@ -216,6 +221,10 @@
   <string name="PLG_REQUIREMENTS_STATUS_WITHDRAWN">Zurückgezogen</string>
   <string name="PLG_REQUIREMENTS_SUBMIT">Zur Prüfung einreichen</string>
   <string name="PLG_REQUIREMENTS_SUBMIT_CONFIRM">Soll die Aktivität &quot;#VAR1#&quot; zur Prüfung eingereicht werden? Je nach Organisationseinstellung kann sie danach nicht mehr geändert werden.</string>
+  <string name="PLG_REQUIREMENTS_SUB_REQUIREMENTS">Unter-Anforderungen</string>
+  <string name="PLG_REQUIREMENTS_THEREOF">Davon</string>
+  <string name="PLG_REQUIREMENTS_THEREOF_EXCEEDS">Die Punkte für &quot;#VAR1#&quot; dürfen die für &quot;#VAR2#&quot; derselben Aktivität nicht übersteigen, weil sie ein Teil davon sind.</string>
+  <string name="PLG_REQUIREMENTS_THEREOF_NEEDS_PARENT">Die Punkte für &quot;#VAR1#&quot; sind Teil der Punkte für &quot;#VAR2#&quot;: Erfasse diese für denselben Zeitraum derselben Aktivität ebenfalls.</string>
   <string name="PLG_REQUIREMENTS_VALIDITY">Gültigkeit</string>
   <string name="PLG_REQUIREMENTS_VALID_FROM">Gültig ab</string>
   <string name="PLG_REQUIREMENTS_VALID_UNTIL">Gültig bis</string>

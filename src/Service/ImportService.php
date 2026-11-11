@@ -681,15 +681,19 @@ final class ImportService
         try {
             $service->save($activity, $resolved['values'], $resolved['userId']);
 
-            foreach ($resolved['credits'] as $credit) {
-                $service->syncCredit(
-                    $activity,
-                    new RequirementType($this->db, (int) $credit['typeId']),
-                    (string) $credit['period'],
-                    (float) $credit['claimed'],
-                    null
-                );
-            }
+            // The credits are checked together once all of them are written: a column of a part
+            // may come before the one of its parent.
+            $service->withinCreditBatch($activity, function () use ($service, $activity, $resolved): void {
+                foreach ($resolved['credits'] as $credit) {
+                    $service->syncCredit(
+                        $activity,
+                        new RequirementType($this->db, (int) $credit['typeId']),
+                        (string) $credit['period'],
+                        (float) $credit['claimed'],
+                        null
+                    );
+                }
+            });
             $this->db->endTransaction();
         } catch (Throwable $exception) {
             $this->db->rollback();

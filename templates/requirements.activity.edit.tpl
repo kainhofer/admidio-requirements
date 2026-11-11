@@ -55,7 +55,11 @@
                         </thead>
                         <tbody>
                             {foreach $creditFields as $cf}
-                                <tr id="adm_req_credit_{$cf.typeId}" {if not $cf.shown}hidden{/if}{if $cf.isNew} data-new="1"{/if}>
+                                <tr id="adm_req_credit_{$cf.typeId}" {if not $cf.shown}hidden{/if}{if $cf.isNew} data-new="1"{/if}{if $cf.parentId} data-parent="{$cf.parentId}"{/if}>
+                                    {if $cf.parentId}
+                                        <td class="ps-4"><i class="bi bi-arrow-return-right text-muted"></i> {$l10n->get('PLG_REQUIREMENTS_THEREOF')}: {$cf.name nofilter}</td>
+                                        <td class="text-muted small">{$l10n->get('PLG_REQUIREMENTS_PERIOD_OF_PARENT')}</td>
+                                    {else}
                                     <td class="fw-bold">{$cf.name nofilter}</td>
                                     <td>
                                         {if $cf.kind eq 'year'}
@@ -86,6 +90,7 @@
                                                    data-kind="date" class="form-control form-control-sm adm-req-period"{if $readOnly} readonly disabled{/if}>
                                         {/if}
                                     </td>
+                                    {/if}
                                     <td>
                                         <input type="number" step="0.01" min="0" name="{$cf.claimedId}" id="{$cf.claimedId}"
                                                value="{$cf.claimedValue}" class="form-control form-control-sm"{if $readOnly} readonly disabled{/if}>

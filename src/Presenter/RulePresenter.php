@@ -205,6 +205,32 @@ class RulePresenter extends RequirementsPresenter
             array('maxLength' => 255, 'helpTextId' => 'PLG_REQUIREMENTS_REQUIREMENT_SHORT_NAME_HELP'));
         $form->addMultilineTextInput('rqt_description', $gL10n->get('SYS_DESCRIPTION'),
             (string) $type->getValue('rqt_description'), 3);
+        // A requirement can be made part of another one ("thereof in person"). Only a requirement
+        // of the organization without a parent of its own qualifies, and not one that has parts.
+        $parentOptions = array();
+        $hasParts = false;
+        foreach ((new RequirementTypeService($gDb))->findTypes() as $candidate) {
+            if ((int) $candidate['rqt_parent_id'] === (int) $type->getValue('rqt_id') && !$type->isNewRecord()) {
+                $hasParts = true;
+            }
+            if ((int) $candidate['rqt_id'] !== (int) $type->getValue('rqt_id')
+                && (int) $candidate['rqt_parent_id'] === 0 && (int) $candidate['rqt_usr_id'] === 0) {
+                $parentOptions[$candidate['rqt_uuid']] = $candidate['rqt_name'];
+            }
+        }
+        if (!$hasParts) {
+            $parentUuid = '';
+            foreach ((new RequirementTypeService($gDb))->findTypes() as $candidate) {
+                if ((int) $candidate['rqt_id'] === (int) $type->getValue('rqt_parent_id')) {
+                    $parentUuid = $candidate['rqt_uuid'];
+                }
+            }
+            $form->addSelectBox('rqt_parent_uuid', $gL10n->get('PLG_REQUIREMENTS_PARENT_REQUIREMENT'), $parentOptions, array(
+                'defaultValue' => $parentUuid,
+                'showContextDependentFirstEntry' => true,
+                'helpTextId' => 'PLG_REQUIREMENTS_PARENT_REQUIREMENT_HELP'
+            ));
+        }
         $form->addSelectBox('rqt_period_unit', $gL10n->get('PLG_REQUIREMENTS_PERIOD_UNIT'), array(
             'year' => $gL10n->get('PLG_REQUIREMENTS_PERIOD_YEAR'),
             'quarter' => $gL10n->get('PLG_REQUIREMENTS_PERIOD_QUARTER'),

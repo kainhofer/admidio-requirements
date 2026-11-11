@@ -156,6 +156,18 @@ try {
             if (array_key_exists('rqt_active', $formValues)) {
                 $values['rqt_active'] = (bool) $formValues['rqt_active'];
             }
+            // The form names the parent by UUID. A type that has parts has no such field, and
+            // leaves the parent as it is.
+            if (array_key_exists('rqt_parent_uuid', $formValues)) {
+                $parent = new RequirementType($gDb);
+                if ((string) $formValues['rqt_parent_uuid'] !== '') {
+                    $parent->readDataByUuid((string) $formValues['rqt_parent_uuid']);
+                }
+                $values['rqt_parent_id'] = (int) $parent->getValue('rqt_id');
+                if ((string) $formValues['rqt_parent_uuid'] !== '' && $values['rqt_parent_id'] === 0) {
+                    throw new Exception('PLG_REQUIREMENTS_PARENT_INVALID');
+                }
+            }
             $service->saveType($type, $values);
 
             $gNavigation->deleteLastUrl();

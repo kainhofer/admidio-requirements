@@ -99,10 +99,14 @@ final class PluginUpdateTest extends RequirementsDatabaseTestCase
     private function downgradeTo04(Database $db): void
     {
         $rules = RequirementsTables::requirementRoleRules();
+        $types = RequirementsTables::requirementTypes();
         $prefix = TABLE_PREFIX;
         $mysql = $db->getEngine() === Database::PDO_ENGINE_MYSQL;
 
         foreach (array(
+            'ALTER TABLE ' . $types . ($mysql ? ' DROP FOREIGN KEY ' : ' DROP CONSTRAINT ') . $prefix . '_fk_rqt_parent',
+            $mysql ? 'DROP INDEX ' . $prefix . '_idx_rqt_parent ON ' . $types : 'DROP INDEX ' . $prefix . '_idx_rqt_parent',
+            'ALTER TABLE ' . $types . ' DROP COLUMN rqt_parent_id',
             'ALTER TABLE ' . $rules . ($mysql ? ' DROP FOREIGN KEY ' : ' DROP CONSTRAINT ') . $prefix . '_fk_rrr_usr',
             $mysql ? 'DROP INDEX ' . $prefix . '_idx_rrr_usr ON ' . $rules : 'DROP INDEX ' . $prefix . '_idx_rrr_usr',
             'ALTER TABLE ' . $rules . ' DROP COLUMN rrr_usr_id'

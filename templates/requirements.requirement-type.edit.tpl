@@ -10,6 +10,9 @@
             {include 'sys-template-parts/form.multiline.tpl' data=$elements['rqt_description']}
             {include 'sys-template-parts/form.input.tpl' data=$elements['rqt_sequence']}
             {include 'sys-template-parts/form.checkbox.tpl' data=$elements['rqt_active']}
+            {if isset($elements['rqt_parent_uuid'])}
+                {include 'sys-template-parts/form.select.tpl' data=$elements['rqt_parent_uuid']}
+            {/if}
         </div>
     </div>
     <div class="card admidio-field-group">
