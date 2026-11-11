@@ -129,7 +129,10 @@
     {/if}
 
     {if $showFiles}
-        <div class="card admidio-field-group">
+        <style>
+            #adm_req_files_card.adm-req-files-over { outline: 2px dashed var(--bs-primary); outline-offset: -2px; background: var(--bs-primary-bg-subtle); }
+        </style>
+        <div class="card admidio-field-group" id="adm_req_files_card">
             <div class="card-header">{$l10n->get('PLG_REQUIREMENTS_FILES')}</div>
             <div class="card-body">
                 {if $files|@count eq 0}

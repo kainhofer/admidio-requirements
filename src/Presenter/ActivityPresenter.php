@@ -1483,6 +1483,52 @@ class ActivityPresenter extends RequirementsPresenter
                 'multiUploadLabel' => $gL10n->get('PLG_REQUIREMENTS_FILES_ADD_ANOTHER'),
                 'allowedMimeTypes' => array_keys($allowed)
             ));
+            // Certificates dropped anywhere on the card go into the file fields: the first empty one, and
+            // a new one (the "attach another" button) once all are taken. The card shows where the drop
+            // will land while a file is dragged over it.
+            $this->addJavascript('
+                (function () {
+                    var card = $("#adm_req_files_card");
+                    function emptyInput() {
+                        return card.find("input[type=file][name=\'userfile[]\']").filter(function () {
+                            return this.files.length === 0;
+                        }).first();
+                    }
+                    function hasFiles(e) {
+                        var types = e.originalEvent.dataTransfer ? e.originalEvent.dataTransfer.types : [];
+                        return Array.prototype.indexOf.call(types, "Files") >= 0;
+                    }
+                    card.on("dragenter dragover", function (e) {
+                        if (hasFiles(e)) {
+                            e.preventDefault();
+                            card.addClass("adm-req-files-over");
+                        }
+                    }).on("dragleave", function (e) {
+                        if (!card[0].contains(e.relatedTarget)) {
+                            card.removeClass("adm-req-files-over");
+                        }
+                    }).on("drop", function (e) {
+                        e.preventDefault();
+                        card.removeClass("adm-req-files-over");
+                        Array.prototype.forEach.call(e.originalEvent.dataTransfer.files, function (file) {
+                            var input = emptyInput();
+                            if (input.length === 0) {
+                                $("#btn_add_attachment_adm_requirements_files").trigger("click");
+                                input = emptyInput();
+                            }
+                            if (input.length > 0) {
+                                var transfer = new DataTransfer();
+                                transfer.items.add(file);
+                                input[0].files = transfer.files;
+                            }
+                        });
+                    });
+                    // A file dropped beside the card would make the browser open it and leave the form.
+                    $(document).on("dragover drop", function (e) {
+                        if (!$(e.target).closest("#adm_req_files_card").length) { e.preventDefault(); }
+                    });
+                })();
+            ', true);
             $form->addDescription('adm_requirements_files_help', $gL10n->get(
                 'PLG_REQUIREMENTS_FILES_ADD_HELP',
                 array(
