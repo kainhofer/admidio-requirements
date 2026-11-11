@@ -354,7 +354,7 @@ class ActivityPresenter extends RequirementsPresenter
                 $gL10n->get('PLG_REQUIREMENTS_REVIEW'), $this->pageUrl('review.php'), 'bi-clipboard-data');
             $this->addPageFunctionsMenuItem('menu_item_requirements_providers',
                 $gL10n->get('PLG_REQUIREMENTS_PROVIDERS'), $this->pageUrl('providers.php'), 'bi-shop');
-            $this->addHistoryMenuItem('activities', array('req_activities', 'req_activity_credits'));
+            $this->addHistoryMenuItem('activities', array('req_activities', 'req_activity_credits', 'req_activity_files'));
             $this->addSettingsMenuItem();
         }
 
