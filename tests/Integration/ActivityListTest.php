@@ -119,4 +119,49 @@ final class ActivityListTest extends RequirementsDatabaseTestCase
         $unknown = $service->findActivityRows(array('userId' => $member['usr_id']), '', array(array('rqa_id; DROP', 'asc')));
         $this->assertSame(3, $unknown['count'], 'A column the list does not know is ignored, not put into the SQL.');
     }
+
+    /**
+     * A part ("thereof in person") is a second line of the row of its parent credit, not a row of its
+     * own - except where there is no parent credit to carry it, or the list is narrowed to the part.
+     */
+    public function testAPartIsNoRowOfItsOwnButTheSecondLineOfItsParent(): void
+    {
+        $member = $this->createMember('req_list_parts');
+        $cpd = $this->createRequirement('CPD', $member['rol_id'], 15.0);
+        $person = $this->createRequirement('Person', $member['rol_id'], 5.0);
+        $service = new ActivityService($this->getDatabase());
+
+        // A credit that was booked before the requirement became a part has no parent credit.
+        $orphan = new Activity($this->getDatabase());
+        $service->save($orphan, array('rqa_title' => 'Old course', 'rqa_begin_date' => '2025-03-01'), $member['usr_id']);
+        $service->saveCredit(new ActivityCredit($this->getDatabase()), $orphan, $person, '2025-03-01', 2.0);
+
+        (new \AdmidioPlugin\Requirements\Service\RequirementTypeService($this->getDatabase()))
+            ->saveType($person, array('rqt_parent_id' => (int) $cpd->getValue('rqt_id')));
+
+        $withBoth = $this->createCreditedActivity($member['usr_id'], $cpd, '2026-03-01', 25.0);
+        $service->saveCredit(new ActivityCredit($this->getDatabase()), $withBoth, $person, '2026-03-01', 15.0);
+
+        $rows = $this->rows(array('userId' => $member['usr_id']));
+        $this->assertSame(
+            array('Course on 2026-03-01' => 1, 'Old course' => 1),
+            array_count_values(array_column($rows, 'rqa_title')),
+            'One row for the activity with both credits, and the part that has no parent credit stays a row.'
+        );
+        $byTitle = array_column($rows, null, 'rqa_title');
+        $this->assertSame((int) $cpd->getValue('rqt_id'), (int) $byTitle['Course on 2026-03-01']['rqt_id']);
+        $this->assertSame((int) $person->getValue('rqt_id'), (int) $byTitle['Old course']['rqt_id']);
+
+        $parts = $service->findPartCredits(array_column($rows, 'rqa_id'));
+        $key = $withBoth->getValue('rqa_id') . '|' . $cpd->getValue('rqt_id') . '|2026-01-01';
+        $this->assertArrayHasKey($key, $parts);
+        $this->assertSame(15.0, (float) $parts[$key][0]['rac_credits_claimed']);
+        $this->assertSame((string) $person->getValue('rqt_short_name'), $parts[$key][0]['rqt_short_name']);
+
+        $ofThePart = $this->rows(array(
+            'userId' => $member['usr_id'],
+            'requirementTypeId' => (int) $person->getValue('rqt_id')
+        ));
+        $this->assertCount(2, $ofThePart, 'Narrowed to the part, its credits are the rows.');
+    }
 }

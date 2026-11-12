@@ -537,6 +537,16 @@ final class ActivityService
                  WHERE rqa.rqa_org_id = ?';
         $params[] = (int) $gCurrentOrgId;
 
+        // A part ("thereof in person") is shown as a second line of the row of its parent credit, so it
+        // is no row of its own - unless its parent has no credit in that period to carry it, or the
+        // list is narrowed to one requirement, in which case the rows are that requirement's own.
+        if ($requirementTypeId === null) {
+            $from .= ' AND NOT EXISTS (SELECT 1 FROM ' . RequirementsTables::activityCredits() . ' AS parent_credit
+                                        WHERE parent_credit.rac_activity_id = rac.rac_activity_id
+                                          AND parent_credit.rac_requirement_type_id = rqt.rqt_parent_id
+                                          AND parent_credit.rac_period_reference = rac.rac_period_reference)';
+        }
+
         $userId = $filter['userId'] ?? null;
         if (!Component::isAdministrable(RequirementsPlugin::ID)) {
             $from .= ' AND rqa.rqa_user_id = ?';
@@ -752,6 +762,40 @@ final class ActivityService
         }
 
         return $changed;
+    }
+
+    /**
+     * The credits towards sub-requirements of the given activities, for the second line of the row of
+     * their parent credit: keyed by activity, parent requirement and period, each with its parts in the
+     * order of the requirements.
+     *
+     * @param array<int,int|string> $activityIds
+     * @return array<string,array<int,array<string,mixed>>>
+     * @throws Exception
+     */
+    public function findPartCredits(array $activityIds): array
+    {
+        $activityIds = array_values(array_unique(array_map('intval', $activityIds)));
+        if ($activityIds === array()) {
+            return array();
+        }
+
+        $rows = $this->db->getArrayFromSql(
+            'SELECT rac.rac_activity_id, rac.rac_period_reference, rac.rac_credits_claimed, rac.rac_credits_accepted,
+                    rqt.rqt_parent_id, rqt.rqt_name, rqt.rqt_short_name
+               FROM ' . RequirementsTables::activityCredits() . ' AS rac
+         INNER JOIN ' . RequirementsTables::requirementTypes() . ' AS rqt ON rqt.rqt_id = rac.rac_requirement_type_id
+              WHERE rqt.rqt_parent_id IS NOT NULL
+                AND rac.rac_activity_id IN (' . implode(', ', array_fill(0, count($activityIds), '?')) . ')
+           ORDER BY rqt.rqt_sequence, rqt.rqt_name, rqt.rqt_id',
+            $activityIds
+        );
+
+        $parts = array();
+        foreach ($rows as $row) {
+            $parts[$row['rac_activity_id'] . '|' . $row['rqt_parent_id'] . '|' . $row['rac_period_reference']][] = $row;
+        }
+        return $parts;
     }
 
     /**

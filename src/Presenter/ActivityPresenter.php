@@ -731,6 +731,8 @@ class ActivityPresenter extends RequirementsPresenter
         $dateFormat = $gSettingsManager->getString('system_date');
         $formatDate = static fn(?string $ymd): string => $ymd === null || $ymd === ''
             ? '' : \DateTimeImmutable::createFromFormat('!Y-m-d', substr($ymd, 0, 10))->format($dateFormat);
+        // The parts of the parents on this page, for the second line of their row.
+        $partsByParent = $service->findPartCredits(array_column($result['rows'], 'rqa_id'));
         $filesByActivity = ActivityFileService::isEnabled()
             ? (new ActivityFileService($gDb))->listForActivities(array_column($result['rows'], 'rqa_id'))
             : array();
@@ -751,6 +753,21 @@ class ActivityPresenter extends RequirementsPresenter
             $date = $formatDate($row['rqa_begin_date']);
             if ($row['rqa_end_date'] !== null && $row['rqa_end_date'] !== $row['rqa_begin_date']) {
                 $date .= ' – ' . $formatDate($row['rqa_end_date']);
+            }
+
+            // Each part is a second line in the requirement and credits cells, in the order of the requirements.
+            $requirementCell = $requirement === '' ? '' : '<span title="' . SecurityUtils::encodeHTML((string) $row['rqt_name'])
+                . '">' . SecurityUtils::encodeHTML($requirement) . '</span>';
+            $creditsCell = $row['rac_id'] === null ? '' : self::creditsCell($row['rac_credits_claimed'], $row['rac_credits_accepted']);
+            if ($row['rac_id'] !== null) {
+                $partKey = $row['rqa_id'] . '|' . $row['rqt_id'] . '|' . $row['rac_period_reference'];
+                foreach ($partsByParent[$partKey] ?? array() as $part) {
+                    $partName = (string) $part['rqt_short_name'] !== '' ? $part['rqt_short_name'] : $part['rqt_name'];
+                    $requirementCell .= '<div class="small text-body-secondary ps-3"><i class="bi bi-arrow-return-right"></i> <span title="'
+                        . SecurityUtils::encodeHTML((string) $part['rqt_name']) . '">' . SecurityUtils::encodeHTML($partName) . '</span></div>';
+                    $creditsCell .= '<div class="small text-body-secondary">'
+                        . self::creditsCell($part['rac_credits_claimed'], $part['rac_credits_accepted']) . '</div>';
+                }
             }
 
             $group = '';
@@ -797,9 +814,8 @@ class ActivityPresenter extends RequirementsPresenter
                 'period' => SecurityUtils::encodeHTML($periodText),
                 'date' => SecurityUtils::encodeHTML($date),
                 'title' => '<a href="' . $editUrl . '">' . SecurityUtils::encodeHTML((string) $row['rqa_title']) . '</a>',
-                'requirement' => $requirement === '' ? '' : '<span title="' . SecurityUtils::encodeHTML((string) $row['rqt_name'])
-                    . '">' . SecurityUtils::encodeHTML($requirement) . '</span>',
-                'credits' => $row['rac_id'] === null ? '' : self::creditsCell($row['rac_credits_claimed'], $row['rac_credits_accepted']),
+                'requirement' => $requirementCell,
+                'credits' => $creditsCell,
                 'provider' => SecurityUtils::encodeHTML($provider),
                 'member' => '<a href="' . $this->pageUrl('index.php', array('mode' => 'list', 'user' => $row['user_uuid'])) . '">'
                     . SecurityUtils::encodeHTML(trim($row['last_name'] . ', ' . $row['first_name'], ', ')) . '</a>',
