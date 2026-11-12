@@ -1356,6 +1356,31 @@ class ActivityPresenter extends RequirementsPresenter
                 admReqPeriodDate = v;
                 $(".adm-req-period[data-auto]").each(function () { admReqFillPeriod($(this), v); });
             });
+            // Credits are entered to a hundredth, which is what the field validates against and what
+            // its spin buttons and arrow keys would step by. A person counts in half hours, so a step of
+            // those moves to the next half - 6 to 6.5, 6.25 to 6.5 - while typing still takes any value.
+            // A spin button or arrow key raises an input event without an inputType, which is how it is
+            // told from typing and pasting; the browser has moved the value by one step, and that is the
+            // direction taken.
+            $("input[data-credit-step], #rqa_attendance").each(function () {
+                var field = $(this);
+                var unit = parseFloat(field.attr("data-credit-step")) || 0.5;
+                var remember = function () { field.data("prev", parseFloat(field.val())); };
+                remember();
+                field.on("input", function (e) {
+                    if (e.originalEvent && e.originalEvent.inputType) { remember(); return; }
+                    var now = parseFloat(field.val());
+                    var before = field.data("prev");
+                    if (isNaN(before)) { before = 0; }
+                    if (!isNaN(now) && Math.abs(Math.abs(now - before) - 0.01) < 0.0005) {
+                        var next = now > before
+                            ? (Math.floor(before / unit + 1e-9) + 1) * unit
+                            : (Math.ceil(before / unit - 1e-9) - 1) * unit;
+                        field.val(Math.max(0, Math.round(next * 100) / 100));
+                    }
+                    remember();
+                });
+            });
             $("#adm_req_add_credit").on("change", function () {
                 var id = $(this).val();
                 if (id === "") { return; }

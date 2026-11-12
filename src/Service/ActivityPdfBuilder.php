@@ -14,7 +14,7 @@ use Admidio\Infrastructure\Utils\PdfUtils;
 final class ActivityPdfBuilder
 {
     /**
-     * @param string $heading title of the document
+     * @param string $heading title in the properties of the file, not printed on the pages
      * @param array<int,array{key?:string,label:string}> $columns the columns of the table; a row has
      *        one entry per column, as plain text with line breaks, which is escaped here
      * @param array<int,array{cells:array<int,string>,certificates:array<int,array{name:string,path:string,mime:string}>}> $rows
@@ -28,7 +28,11 @@ final class ActivityPdfBuilder
         string $certificatesHeading,
         ?string $language = null
     ): string {
-        $pdf = PdfUtils::createDocument('L', $heading, $language);
+        // The heading of the document class is printed at the top of every page, certificate pages
+        // included, and a list of activities needs none: the table says what it is. The title still
+        // goes into the properties of the file.
+        $pdf = PdfUtils::createDocument('L', '', $language);
+        $pdf->setTitle($heading);
 
         $html = '<table border="1" cellpadding="3"><thead><tr>';
         foreach ($columns as $column) {

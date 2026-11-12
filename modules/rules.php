@@ -226,7 +226,11 @@ try {
             $type->readDataById((int) $rule->getValue('rrr_requirement_type_id'));
 
             $service->saveRule($rule, $type, array($field => $field === 'rrr_required_credits' ? (float) $value : $value));
-            echo json_encode(array('status' => 'success'));
+            // What the cell shows from now on, formatted as the page formats it.
+            $display = $field === 'rrr_required_credits'
+                ? rtrim(rtrim(number_format((float) $rule->getValue($field, 'database'), 2, '.', ''), '0'), '.')
+                : RulePresenter::formatRuleDate((string) $rule->getValue($field, 'database'));
+            echo json_encode(array('status' => 'success', 'display' => $display));
             break;
 
         case 'type-delete':

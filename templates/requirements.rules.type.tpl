@@ -46,18 +46,19 @@
                                     <td>{$rule.roleName nofilter}</td>
                                     <td>{$type.period}</td>
                                     {if $isAdmin}
-                                    {* Edited in place: a change is saved as soon as the field is left. *}
-                                    <td><input type="number" min="0" step="0.5" class="form-control form-control-sm adm-req-inline"
-                                               style="width: 6rem;" data-url="{$rule.inlineUrl}" data-field="rrr_required_credits"
-                                               value="{$rule.credits}" aria-label="{$l10n->get('PLG_REQUIREMENTS_REQUIRED_CREDITS')}"></td>
+                                    {* Edited in place: a double-click turns the value into a field, Enter or leaving the
+                                       field saves, Escape drops the change. *}
+                                    <td><span class="adm-req-inline" data-url="{$rule.inlineUrl}" data-field="rrr_required_credits"
+                                              data-type="number" data-value="{$rule.credits}"
+                                              title="{$l10n->get('PLG_REQUIREMENTS_INLINE_EDIT_HINT')}">{$rule.creditsText}</span></td>
                                     <td class="text-nowrap">
-                                        <input type="date" class="form-control form-control-sm d-inline-block adm-req-inline"
-                                               style="width: 9.5rem;" data-url="{$rule.inlineUrl}" data-field="rrr_valid_from"
-                                               value="{$rule.validFrom}" aria-label="{$l10n->get('PLG_REQUIREMENTS_VALID_FROM')}">
+                                        <span class="adm-req-inline" data-url="{$rule.inlineUrl}" data-field="rrr_valid_from"
+                                              data-type="date" data-value="{$rule.validFrom}"
+                                              title="{$l10n->get('PLG_REQUIREMENTS_INLINE_EDIT_HINT')}">{$rule.validFromText}</span>
                                         &ndash;
-                                        <input type="date" class="form-control form-control-sm d-inline-block adm-req-inline"
-                                               style="width: 9.5rem;" data-url="{$rule.inlineUrl}" data-field="rrr_valid_until"
-                                               value="{$rule.validUntil}" aria-label="{$l10n->get('PLG_REQUIREMENTS_VALID_UNTIL')}">
+                                        <span class="adm-req-inline" data-url="{$rule.inlineUrl}" data-field="rrr_valid_until"
+                                              data-type="date" data-value="{$rule.validUntil}"
+                                              title="{$l10n->get('PLG_REQUIREMENTS_INLINE_EDIT_HINT')}">{$rule.validUntilText}</span>
                                     </td>
                                     {else}
                                     <td>{$rule.credits}</td>

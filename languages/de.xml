@@ -20,7 +20,6 @@
   <string name="PLG_REQUIREMENTS_CLEAR_FILTERS">Filter zurücksetzen</string>
   <string name="PLG_REQUIREMENTS_COLUMNS">Spalten</string>
   <string name="PLG_REQUIREMENTS_CONTRIBUTIONS_OF">Es werden nur die Aktivitäten von #VAR1# angezeigt.</string>
-  <string name="PLG_REQUIREMENTS_CONTRIBUTIONS_TO">Es werden nur die Aktivitäten angezeigt, die #VAR1# angerechnet werden.</string>
   <string name="PLG_REQUIREMENTS_COVERAGE">Erfüllungsgrad</string>
   <string name="PLG_REQUIREMENTS_COVERAGE_ADDITIONAL_CREDITS">Zusätzliche Anrechnungen</string>
   <string name="PLG_REQUIREMENTS_COVERAGE_FULFILLED">Erfüllt</string>
@@ -112,6 +111,7 @@
   <string name="PLG_REQUIREMENTS_IMPORT_USER_UUID">Mitglieds-ID (UUID)</string>
   <string name="PLG_REQUIREMENTS_IMPORT_WORKSHEET_HELP">Name oder Nummer des zu importierenden Arbeitsblatts. Leer lassen für das erste. Bei einer CSV-Datei ohne Wirkung.</string>
   <string name="PLG_REQUIREMENTS_INACTIVE">inaktiv</string>
+  <string name="PLG_REQUIREMENTS_INLINE_EDIT_HINT">Doppelklick zum Bearbeiten</string>
   <string name="PLG_REQUIREMENTS_INVALID_ACTIVITY_PERIOD">Das Enddatum der Aktivität darf nicht vor dem Beginndatum liegen.</string>
   <string name="PLG_REQUIREMENTS_INVALID_VALIDITY_PERIOD">Das Ende der Regelgültigkeit darf nicht vor dem Beginn liegen.</string>
   <string name="PLG_REQUIREMENTS_LAST_FULFILMENT">Letzte Erfüllung</string>

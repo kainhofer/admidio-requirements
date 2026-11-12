@@ -20,7 +20,6 @@
   <string name="PLG_REQUIREMENTS_CLEAR_FILTERS">Clear filters</string>
   <string name="PLG_REQUIREMENTS_COLUMNS">Columns</string>
   <string name="PLG_REQUIREMENTS_CONTRIBUTIONS_OF">Only the activities of #VAR1# are shown.</string>
-  <string name="PLG_REQUIREMENTS_CONTRIBUTIONS_TO">Only the activities credited to #VAR1# are shown.</string>
   <string name="PLG_REQUIREMENTS_COVERAGE">Coverage</string>
   <string name="PLG_REQUIREMENTS_COVERAGE_ADDITIONAL_CREDITS">Additional credits</string>
   <string name="PLG_REQUIREMENTS_COVERAGE_FULFILLED">Fulfilled</string>
@@ -112,6 +111,7 @@
   <string name="PLG_REQUIREMENTS_IMPORT_USER_UUID">Member ID (UUID)</string>
   <string name="PLG_REQUIREMENTS_IMPORT_WORKSHEET_HELP">Name or number of the worksheet to import. Leave empty for the first one. Ignored for a CSV file.</string>
   <string name="PLG_REQUIREMENTS_INACTIVE">inactive</string>
+  <string name="PLG_REQUIREMENTS_INLINE_EDIT_HINT">Double-click to edit</string>
   <string name="PLG_REQUIREMENTS_INVALID_ACTIVITY_PERIOD">The activity end date must not be before its begin date.</string>
   <string name="PLG_REQUIREMENTS_INVALID_VALIDITY_PERIOD">The rule validity end date must not be before its start date.</string>
   <string name="PLG_REQUIREMENTS_LAST_FULFILMENT">Last fulfilment</string>

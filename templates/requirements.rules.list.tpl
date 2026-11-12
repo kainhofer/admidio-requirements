@@ -63,32 +63,70 @@
 {/if}
 
 {if $isAdmin}
+<style>
+    .adm-req-inline { cursor: text; border-bottom: 1px dotted transparent; }
+    .adm-req-inline:hover { border-bottom-color: var(--bs-secondary-color, #6c757d); background: var(--bs-secondary-bg, #e9ecef); }
+    .adm-req-inline .form-control { display: inline-block; }
+</style>
 <script>
     (function () {
         var csrf = "{$csrfToken}";
-        document.querySelectorAll(".adm-req-inline").forEach(function (input) {
-            input.dataset.saved = input.value;
-            input.addEventListener("change", function () {
-                var body = new URLSearchParams({ adm_csrf_token: csrf, field: input.dataset.field, value: input.value });
-                input.classList.remove("is-invalid", "is-valid");
-                fetch(input.dataset.url, { method: "POST", body: body })
+
+        function messageText(html) {
+            {* The message is HTML from the server's purifier; show it as text. *}
+            var tmp = document.createElement("div");
+            tmp.innerHTML = html;
+            return tmp.textContent;
+        }
+
+        function edit(span) {
+            if (span.querySelector("input")) { return; }
+            var shown = span.textContent;
+            var input = document.createElement("input");
+            input.type = span.dataset.type;
+            input.className = "form-control form-control-sm";
+            input.style.width = span.dataset.type === "date" ? "9.5rem" : "6rem";
+            if (span.dataset.type === "number") { input.min = "0"; input.step = "0.5"; }
+            input.value = span.dataset.value;
+            span.textContent = "";
+            span.appendChild(input);
+            input.focus();
+
+            var finished = false;
+            function finish(save) {
+                if (finished) { return; }
+                finished = true;
+                var value = input.value;
+                span.textContent = shown;
+                if (!save || value === span.dataset.value) { return; }
+
+                span.classList.add("text-muted");
+                fetch(span.dataset.url, {
+                    method: "POST",
+                    body: new URLSearchParams({ adm_csrf_token: csrf, field: span.dataset.field, value: value })
+                })
                     .then(function (response) { return response.json(); })
                     .then(function (result) {
+                        span.classList.remove("text-muted");
                         if (result.status === "success") {
-                            input.dataset.saved = input.value;
-                            input.classList.add("is-valid");
-                            setTimeout(function () { input.classList.remove("is-valid"); }, 1500);
+                            span.dataset.value = value;
+                            span.textContent = result.display;
                         } else {
-                            input.classList.add("is-invalid");
-                            input.title = result.message;
-                            input.value = input.dataset.saved;
-                            {* The message is HTML from the server's purifier; show it as text. *}
-                            var tmp = document.createElement("div"); tmp.innerHTML = result.message;
-                            alert(tmp.textContent);
+                            alert(messageText(result.message));
                         }
                     })
-                    .catch(function () { input.classList.add("is-invalid"); input.value = input.dataset.saved; });
+                    .catch(function () { span.classList.remove("text-muted"); });
+            }
+            input.addEventListener("keydown", function (e) {
+                if (e.key === "Enter") { e.preventDefault(); finish(true); }
+                else if (e.key === "Escape") { e.preventDefault(); finish(false); }
             });
+            input.addEventListener("blur", function () { finish(true); });
+        }
+
+        document.addEventListener("dblclick", function (e) {
+            var span = e.target.closest(".adm-req-inline");
+            if (span) { edit(span); }
         });
     })();
 </script>

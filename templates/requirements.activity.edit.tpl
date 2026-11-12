@@ -92,13 +92,13 @@
                                     </td>
                                     {/if}
                                     <td>
-                                        <input type="number" step="0.01" min="0" name="{$cf.claimedId}" id="{$cf.claimedId}"
+                                        <input type="number" step="0.01" min="0" data-credit-step="0.5" name="{$cf.claimedId}" id="{$cf.claimedId}"
                                                value="{$cf.claimedValue}" class="form-control form-control-sm"{if $readOnly} readonly disabled{/if}>
                                     </td>
                                     {if $showReview}
                                         <td>
                                             {if $cf.acceptedId}
-                                                <input type="number" step="0.01" min="0" name="{$cf.acceptedId}" id="{$cf.acceptedId}"
+                                                <input type="number" step="0.01" min="0" data-credit-step="0.5" name="{$cf.acceptedId}" id="{$cf.acceptedId}"
                                                        value="{$cf.acceptedValue}" class="form-control form-control-sm"{if $readOnly} readonly disabled{/if}>
                                             {/if}
                                         </td>

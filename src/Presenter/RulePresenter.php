@@ -33,6 +33,21 @@ class RulePresenter extends RequirementsPresenter
     /**
      * @throws Exception|\Smarty\Exception
      */
+    /**
+     * A validity date in the format of the system, or an ellipsis for an open end.
+     */
+    public static function formatRuleDate(?string $value): string
+    {
+        global $gSettingsManager;
+
+        if ($value === null || $value === '') {
+            return '…';
+        }
+        $date = \DateTimeImmutable::createFromFormat('!Y-m-d', $value);
+
+        return $date === false ? $value : $date->format($gSettingsManager->getString('system_date'));
+    }
+
     public function createList(string $query = ''): void
     {
         global $gDb, $gL10n, $gCurrentUser, $gCurrentSession, $gSettingsManager;
@@ -98,7 +113,7 @@ class RulePresenter extends RequirementsPresenter
             $typeRules = array();
             foreach ($rulesByType[$typeId] ?? array() as $rule) {
                 $ruleRowId = 'adm_requirements_rule_' . $rule['rrr_uuid'];
-                $validity = ($rule['rrr_valid_from'] ?: '…') . ' – ' . ($rule['rrr_valid_until'] ?: '…');
+                $validity = self::formatRuleDate($rule['rrr_valid_from']) . ' – ' . self::formatRuleDate($rule['rrr_valid_until']);
                 // The partial-period handling, the pro-rata basis and the membership condition are
                 // details of a rule: one line of text instead of a column each.
                 $details = array();
@@ -122,8 +137,11 @@ class RulePresenter extends RequirementsPresenter
                     'credits' => (float) $rule['rrr_required_credits'],
                     'details' => SecurityUtils::encodeHTML(implode('; ', $details)),
                     'validity' => $validity,
+                    'creditsText' => self::formatCredits($rule['rrr_required_credits']),
                     'validFrom' => (string) $rule['rrr_valid_from'],
                     'validUntil' => (string) $rule['rrr_valid_until'],
+                    'validFromText' => self::formatRuleDate($rule['rrr_valid_from']),
+                    'validUntilText' => self::formatRuleDate($rule['rrr_valid_until']),
                     'inlineUrl' => $this->pageUrl('rules.php', array('mode' => 'rule-inline', 'uuid' => $rule['rrr_uuid'])),
                     'editUrl' => $this->pageUrl('rules.php', array('mode' => 'rule-edit', 'uuid' => $rule['rrr_uuid'])),
                     'rowId' => $ruleRowId,
