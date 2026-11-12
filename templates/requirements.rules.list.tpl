@@ -27,6 +27,7 @@
                             {if $own.shortName}<span class="text-muted">({$own.shortName nofilter})</span>{/if}
                             {if $own.target}<span class="badge bg-info">{$l10n->get('PLG_REQUIREMENTS_OWN_TARGET')}</span>{/if}
                             {if not $own.active}<span class="badge bg-secondary">{$l10n->get('PLG_REQUIREMENTS_INACTIVE')}</span>{/if}
+                            {if $own.parentName}<div class="text-muted small"><i class="bi bi-arrow-return-right"></i> {$l10n->get('PLG_REQUIREMENTS_PARENT_REQUIREMENT')}: {$own.parentName nofilter}</div>{/if}
                             {if $own.description}<div class="text-muted small">{$own.description nofilter}</div>{/if}
                         </td>
                         <td>{$own.period}</td>

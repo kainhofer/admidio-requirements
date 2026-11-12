@@ -70,6 +70,17 @@ try {
                 }
             }
             $values['rqt_active'] = (bool) ($formValues['rqt_active'] ?? false);
+            // The form names the parent by UUID; a requirement that has parts has no such field.
+            if (array_key_exists('rqt_parent_uuid', $formValues)) {
+                $parent = new RequirementType($gDb);
+                if ((string) $formValues['rqt_parent_uuid'] !== '') {
+                    $parent->readDataByUuid((string) $formValues['rqt_parent_uuid']);
+                    if ((int) $parent->getValue('rqt_id') === 0) {
+                        throw new Exception('PLG_REQUIREMENTS_PARENT_INVALID');
+                    }
+                }
+                $values['rqt_parent_id'] = (int) $parent->getValue('rqt_id');
+            }
             $service->saveOwnType($type, $values);
 
             $gNavigation->deleteLastUrl();

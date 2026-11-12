@@ -6,6 +6,7 @@ use Admidio\Infrastructure\Utils\SecurityUtils;
 use Admidio\UI\Presenter\FormPresenter;
 use AdmidioPlugin\Requirements\Entity\RequirementRoleRule;
 use AdmidioPlugin\Requirements\Entity\RequirementType;
+use AdmidioPlugin\Requirements\Service\FulfilmentService;
 use AdmidioPlugin\Requirements\Service\RequirementTypeService;
 
 /**
@@ -192,6 +193,10 @@ class RulePresenter extends RequirementsPresenter
             || mb_stripos((string) $type['rqt_name'], $query) !== false
             || mb_stripos((string) $type['rqt_short_name'], $query) !== false;
 
+        $typeNames = array();
+        foreach ($service->findTypes('', $userId) as $knownType) {
+            $typeNames[(int) $knownType['rqt_id']] = (string) $knownType['rqt_name'];
+        }
         $own = array();
         foreach (array(
             'own' => $service->findOwnTypes($userId),
@@ -201,6 +206,7 @@ class RulePresenter extends RequirementsPresenter
                 $uuid = $kind === 'own' ? $row['rqt_uuid'] : $row['rrr_uuid'];
                 $own[] = array(
                     'rowId' => 'adm_requirements_' . $kind . '_' . $uuid,
+                    'parentName' => SecurityUtils::encodeHTML($typeNames[(int) ($row['rqt_parent_id'] ?? 0)] ?? ''),
                     'target' => $kind === 'target',
                     'name' => SecurityUtils::encodeHTML((string) $row['rqt_name']),
                     'shortName' => SecurityUtils::encodeHTML((string) $row['rqt_short_name']),
@@ -266,7 +272,8 @@ class RulePresenter extends RequirementsPresenter
                 $hasParts = true;
             }
             if ((int) $candidate['rqt_id'] !== (int) $type->getValue('rqt_id')
-                && (int) $candidate['rqt_parent_id'] === 0 && (int) $candidate['rqt_usr_id'] === 0) {
+                && (int) $candidate['rqt_parent_id'] === 0 && (int) $candidate['rqt_usr_id'] === 0
+                && (string) $candidate['rqt_period_anchor'] === 'calendar') {
                 $parentOptions[$candidate['rqt_uuid']] = $candidate['rqt_name'];
             }
         }
@@ -453,6 +460,38 @@ class RulePresenter extends RequirementsPresenter
         $form->addCheckbox('rqt_active', $gL10n->get('PLG_REQUIREMENTS_ACTIVE'),
             $type->isNewRecord() ? true : (bool) $type->getValue('rqt_active'),
             array('helpTextId' => 'PLG_REQUIREMENTS_REQUIREMENT_ACTIVE_HELP'));
+
+        // A requirement of their own can be made part of one of the organization's that applies to the
+        // member, or of another of their own - "thereof in person". Only requirements with a calendar
+        // period qualify, and one that has parts itself cannot become a part.
+        $userId = (int) $gCurrentUser->getValue('usr_id');
+        $applicable = (new FulfilmentService($gDb))->applicableRequirementTypeIds($userId);
+        $parentOptions = array();
+        $parentUuid = '';
+        $hasParts = false;
+        foreach ((new RequirementTypeService($gDb))->findTypes('', $userId) as $candidate) {
+            $candidateId = (int) $candidate['rqt_id'];
+            if (!$type->isNewRecord() && (int) $candidate['rqt_parent_id'] === (int) $type->getValue('rqt_id')) {
+                $hasParts = true;
+            }
+            if ($candidateId === (int) $type->getValue('rqt_parent_id')) {
+                $parentUuid = $candidate['rqt_uuid'];
+            }
+            if ($candidateId === (int) $type->getValue('rqt_id')
+                || (int) $candidate['rqt_parent_id'] > 0
+                || (string) $candidate['rqt_period_anchor'] !== 'calendar'
+                || ((int) $candidate['rqt_usr_id'] === 0 && !in_array($candidateId, $applicable, true))) {
+                continue;
+            }
+            $parentOptions[$candidate['rqt_uuid']] = $candidate['rqt_name'];
+        }
+        if (!$hasParts) {
+            $form->addSelectBox('rqt_parent_uuid', $gL10n->get('PLG_REQUIREMENTS_PARENT_REQUIREMENT'), $parentOptions, array(
+                'defaultValue' => $parentUuid,
+                'showContextDependentFirstEntry' => true,
+                'helpTextId' => 'PLG_REQUIREMENTS_PARENT_REQUIREMENT_HELP'
+            ));
+        }
 
         $form->addSelectBox('rqt_period_unit', $gL10n->get('PLG_REQUIREMENTS_PERIOD_UNIT'), array(
             'year' => $gL10n->get('PLG_REQUIREMENTS_PERIOD_YEAR'),

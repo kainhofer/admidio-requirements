@@ -64,8 +64,13 @@ final class RequirementTypeService
     }
 
     /**
-     * The parent a requirement type may be made part of: a requirement of the same owner that is
+     * The parent a requirement type may be made part of: a requirement with a calendar period that is
      * not itself a part of another one, and the type must not have parts of its own - one level only.
+     *
+     * A requirement of the organization can only be part of another requirement of the organization.
+     * A member's own requirement can be part of one of the organization's or of one of their own, but
+     * never of another member's. Existing credits are not looked at: those that were booked before a
+     * requirement became a part stay as they are, and only new edits are held to the "thereof" rule.
      *
      * @throws Exception
      */
@@ -75,19 +80,28 @@ final class RequirementTypeService
 
         $parent = new RequirementType($this->db, $parentId);
         $typeId = (int)$type->getValue('rqt_id');
+        $parentOwner = self::ownerOf($parent);
         if ((int)$parent->getValue('rqt_id') === 0
             || (int)$parent->getValue('rqt_org_id') !== (int)$gCurrentOrgId
             || $parentId === $typeId
             || (int)$parent->getValue('rqt_parent_id') > 0
-            || self::ownerOf($parent) !== self::ownerOf($type)) {
+            || ($parentOwner !== null && $parentOwner !== self::ownerOf($type))) {
             throw new Exception('PLG_REQUIREMENTS_PARENT_INVALID');
         }
         if ($typeId > 0 && $this->countParts($typeId) > 0) {
             throw new Exception('PLG_REQUIREMENTS_PARENT_INVALID');
         }
+        // A part lives in the periods of its parent, which a requirement renewed after its last
+        // fulfilment does not have.
+        if ((string)$parent->getValue('rqt_period_anchor') !== 'calendar') {
+            throw new Exception('PLG_REQUIREMENTS_PARENT_PERIOD_ONLY');
+        }
         return $parent;
     }
 
+    /**
+     * How many parts a requirement has, the members' own ones included.
+     */
     private function countParts(int $typeId): int
     {
         return (int)$this->db->queryPrepared(
@@ -144,9 +158,14 @@ final class RequirementTypeService
             throw new Exception('SYS_INVALID_PAGE_VIEW');
         }
         // A sub-requirement is a part of its parent and therefore lives in the parent's periods.
+        $typeIdForParts = (int)$type->getValue('rqt_id');
         $parentId = array_key_exists('rqt_parent_id', $values)
             ? ((int)$values['rqt_parent_id'] > 0 ? (int)$values['rqt_parent_id'] : null)
             : ($type->getValue('rqt_parent_id') ? (int)$type->getValue('rqt_parent_id') : null);
+        if ($parentId === null && $anchor !== 'calendar' && $typeIdForParts > 0 && $this->countParts($typeIdForParts) > 0) {
+            // The parts of this requirement need calendar periods to be parts of.
+            throw new Exception('PLG_REQUIREMENTS_PARENT_PERIOD_ONLY');
+        }
         if ($parentId !== null) {
             $parent = $this->assertValidParent($type, $parentId);
             $unit = (string)$parent->getValue('rqt_period_unit');
@@ -391,13 +410,26 @@ final class RequirementTypeService
             throw new Exception('PLG_REQUIREMENTS_REQUIREMENT_HAS_CREDITS', array($credits));
         }
 
-        $parts = $this->countParts((int) $type->getValue('rqt_id'));
+        // The organization's own parts have to be dealt with first. The members' own parts are not
+        // counted - nobody else may know they exist - and are detached with the parent: they stay,
+        // as requirements of their own.
+        $parts = (int) $this->db->queryPrepared(
+            'SELECT COUNT(*) FROM ' . RequirementsTables::requirementTypes() . '
+              WHERE rqt_parent_id = ? AND rqt_usr_id IS NULL',
+            array((int) $type->getValue('rqt_id'))
+        )->fetchColumn();
         if ($parts > 0) {
             throw new Exception('PLG_REQUIREMENTS_REQUIREMENT_HAS_PARTS', array($parts));
         }
 
         $this->db->startTransaction();
         try {
+            $this->db->queryPrepared(
+                'UPDATE ' . RequirementsTables::requirementTypes() . '
+                    SET rqt_parent_id = NULL
+                  WHERE rqt_parent_id = ? AND rqt_usr_id IS NOT NULL',
+                array((int) $type->getValue('rqt_id'))
+            );
             $type->delete();
             $this->db->endTransaction();
         } catch (Throwable $exception) {
@@ -648,6 +680,16 @@ final class RequirementTypeService
             throw new Exception('SYS_FIELD_EMPTY', array('PLG_REQUIREMENTS_OWN_SINCE'));
         }
 
+        // A member may make their requirement part of one of the organization's, but only of one that
+        // applies to them - the others are not theirs to know about.
+        if ((int) ($values['rqt_parent_id'] ?? 0) > 0) {
+            $parent = new RequirementType($this->db, (int) $values['rqt_parent_id']);
+            if (self::ownerOf($parent) === null
+                && !in_array((int) $values['rqt_parent_id'], (new FulfilmentService($this->db))->applicableRequirementTypeIds($userId), true)) {
+                throw new Exception('PLG_REQUIREMENTS_PARENT_INVALID');
+            }
+        }
+
         // One role is all there is, so the way several roles combine does not arise.
         $values['rqt_multiple_roles_mode'] = 'maximum';
         $this->applyTypeValues($type, $values);
@@ -655,6 +697,7 @@ final class RequirementTypeService
         $this->db->startTransaction();
         try {
             $type->save();
+            $this->syncPartPeriods($type);
             $rule = $this->ownRule($type, $userId);
             $this->applyRuleValues($rule, $type, null, $userId, $values);
             $rule->save();

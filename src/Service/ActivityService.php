@@ -207,7 +207,7 @@ final class ActivityService
         $rows = $this->db->getArrayFromSql(
             'SELECT rac.rac_requirement_type_id, rac.rac_period_reference,
                     rac.rac_credits_claimed, rac.rac_credits_accepted,
-                    rqt.rqt_parent_id, rqt.rqt_name, rpt.rqt_name AS parent_name
+                    rqt.rqt_parent_id, rqt.rqt_usr_id AS part_owner, rqt.rqt_name, rpt.rqt_name AS parent_name
                FROM ' . RequirementsTables::activityCredits() . ' AS rac
          INNER JOIN ' . RequirementsTables::requirementTypes() . ' AS rqt ON rqt.rqt_id = rac.rac_requirement_type_id
           LEFT JOIN ' . RequirementsTables::requirementTypes() . ' AS rpt ON rpt.rqt_id = rqt.rqt_parent_id
@@ -222,8 +222,15 @@ final class ActivityService
         $effective = static fn(array $row): float => $row['rac_credits_accepted'] === null
             ? (float) $row['rac_credits_claimed'] : (float) $row['rac_credits_accepted'];
 
+        $currentUserId = (int) $GLOBALS['gCurrentUser']->getValue('usr_id');
         foreach ($rows as $row) {
             if ((int) $row['rqt_parent_id'] === 0) {
+                continue;
+            }
+            // A member's own part is the member's business. Somebody else saving the activity - a
+            // reviewer lowering the accepted credits of the parent - is neither held up by it nor told
+            // what the member calls it; the member is held to the rule when they save.
+            if ((int) $row['part_owner'] > 0 && (int) $row['part_owner'] !== $currentUserId) {
                 continue;
             }
             $parent = $byKey[$row['rqt_parent_id'] . '|' . $row['rac_period_reference']] ?? null;
