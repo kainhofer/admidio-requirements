@@ -17,6 +17,8 @@
     .adm-req-overview .adm-req-val-in { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; line-height: 1; white-space: nowrap; color: #212529; text-shadow: 0 0 2px #fff, 0 0 3px #fff; }
     .adm-req-overview .adm-req-bar-link { display: block; text-decoration: none; color: inherit; }
     .adm-req-overview .adm-req-track.has-target { outline: 1px solid var(--bs-secondary-color, #6c757d); }
+    .adm-req-overview .adm-req-track.unmet { outline: 1px solid var(--bs-danger, #dc3545); }
+    .adm-req-overview .adm-req-bar-link:hover .adm-req-track.unmet { outline: 2px solid var(--bs-danger, #dc3545); outline-offset: -1px; }
     .adm-req-overview .adm-req-bar-link:hover .adm-req-track { outline: 2px solid var(--bs-primary, #0d6efd); }
     .adm-req-overview .adm-req-pending { font-size: .7rem; font-style: italic; color: var(--bs-secondary-color, #6c757d); }
     .adm-req-overview .adm-req-row.has-parts { border-bottom: 0; padding-bottom: .1rem; }

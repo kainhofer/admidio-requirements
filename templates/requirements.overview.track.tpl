@@ -2,7 +2,7 @@
    period of its parent), the track with its fill and numbers, and the link to its contributions. *}
 {if $p.url}<a class="adm-req-bar-link" href="{$p.url}" title="{$l10n->get('PLG_REQUIREMENTS_SHOW_CONTRIBUTIONS')}">{/if}
 {if $label}<div class="adm-req-bar-label">{$p.label}</div>{/if}
-<div class="adm-req-track{if $p.required is not null} has-target{/if}{if not $label} adm-req-part-track{/if}">
+<div class="adm-req-track{if $p.required is not null} has-target{/if}{if $p.required gt 0 and $p.attained lt $p.required} unmet{/if}{if not $label} adm-req-part-track{/if}">
     {if $p.percent is not null}
         <div class="adm-req-fill {if $p.status eq 'fulfilled'}ok{elseif $p.status eq 'overdue' or $p.status eq 'never-fulfilled'}over{elseif $p.status eq 'missing'}miss{else}none{/if}"
              style="width: {$p.percent}%;"></div>
