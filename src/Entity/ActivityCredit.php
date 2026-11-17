@@ -10,7 +10,6 @@ use AdmidioPlugin\Requirements\Service\FulfilmentService;
 final class ActivityCredit extends Entity
 {
     use OrganizationScope;
-    use Loggable;
 
     public function __construct(Database $database, int|string $id = '')
     {
@@ -29,14 +28,6 @@ final class ActivityCredit extends Entity
     public function getHookId(): ?string
     {
         return 'requirements_activity_credit';
-    }
-
-    /**
-     * A credit towards a requirement a member tracks for themselves stays out of the change history.
-     */
-    protected function isPrivateRecord(): bool
-    {
-        return $this->isOwnRequirementType((int) $this->getValue('rac_requirement_type_id'));
     }
 
     public function getIgnoredLogColumns(): array

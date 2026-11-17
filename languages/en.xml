@@ -138,7 +138,7 @@
   <string name="PLG_REQUIREMENTS_OWN_NONE">You have not defined any requirements of your own yet.</string>
   <string name="PLG_REQUIREMENTS_OWN_REQUIREMENT">Own requirement</string>
   <string name="PLG_REQUIREMENTS_OWN_REQUIREMENTS">My requirements</string>
-  <string name="PLG_REQUIREMENTS_OWN_REQUIREMENTS_DESC">Requirements you track for yourself in addition to those of the organization, for example the training obligations of your employer or of a licence, and your own targets for requirements of the organization that apply to you through your work. Other members do not see them, and administrators only as the credits on your activities. Credit your activities to them like to any other requirement.</string>
+  <string name="PLG_REQUIREMENTS_OWN_REQUIREMENTS_DESC">Requirements you track for yourself in addition to those of the organization, for example the training obligations of your employer or of a licence, and your own targets for requirements of the organization that apply to you through your work. Other members do not see them. The administrators of the organization see them on your activities and in the change history, which keeps a record of your changes to them as well. Credit your activities to them like to any other requirement.</string>
   <string name="PLG_REQUIREMENTS_OWN_SINCE">Applies since</string>
   <string name="PLG_REQUIREMENTS_OWN_SINCE_HELP">The day your obligation begins. Nothing is owed for the periods before it, and the period it falls into is pro-rated when partial periods are pro-rated.</string>
   <string name="PLG_REQUIREMENTS_OWN_TARGET">Own target</string>

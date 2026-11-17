@@ -354,9 +354,11 @@ class ActivityPresenter extends RequirementsPresenter
                 $gL10n->get('PLG_REQUIREMENTS_REVIEW'), $this->pageUrl('review.php'), 'bi-clipboard-data');
             $this->addPageFunctionsMenuItem('menu_item_requirements_providers',
                 $gL10n->get('PLG_REQUIREMENTS_PROVIDERS'), $this->pageUrl('providers.php'), 'bi-shop');
-            $this->addHistoryMenuItem('activities', array('req_activities', 'req_activity_credits', 'req_activity_files'));
             $this->addSettingsMenuItem();
         }
+        // Core shows the entry to whoever may read the tables: administrators all of it, a member
+        // with a core that lets them read their own changes (see plugin.php) the trail of those.
+        $this->addHistoryMenuItem('activities', array('req_activities', 'req_activity_credits', 'req_activity_files'));
 
         $effectiveUserUuid = $filter['userId'] === null ? '' : $userUuid;
         $this->assignSmartyVariable('userLabel', SecurityUtils::encodeHTML($filter['userName']));

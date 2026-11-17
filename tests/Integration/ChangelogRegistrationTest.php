@@ -89,6 +89,31 @@ final class ChangelogRegistrationTest extends RequirementsDatabaseTestCase
     }
 
     /**
+     * A member reads the changes they made themselves, so that they have the trail of their own
+     * records; core restricts the entries to their author because no permission opens the tables.
+     */
+    public function testANormalMemberMayReadTheirOwnChanges(): void
+    {
+        if (!method_exists(ChangelogService::class, 'getOwnChangeTables')) {
+            $this->markTestSkipped('This core cannot restrict a table to the changes of their author.');
+        }
+        $member = $this->createMember('req_changelog_own');
+
+        [$readable, $restricted] = $this->asMember($member['usr_id'], function (): array {
+            global $gCurrentUser;
+            return array(
+                ChangelogService::getReadableTables($gCurrentUser, self::TABLES),
+                ChangelogService::getOwnChangeRestriction($gCurrentUser)
+            );
+        });
+
+        foreach (self::TABLES as $table) {
+            $this->assertContains($table, $readable);
+            $this->assertContains($table, $restricted, $table . ' must be restricted to the own changes.');
+        }
+    }
+
+    /**
      * The callback speaks for the current user, so being asked about somebody else has to answer
      * nothing rather than the current user's own rights.
      */

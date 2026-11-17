@@ -138,7 +138,7 @@
   <string name="PLG_REQUIREMENTS_OWN_NONE">Du hast noch keine eigenen Anforderungen angelegt.</string>
   <string name="PLG_REQUIREMENTS_OWN_REQUIREMENT">Eigene Anforderung</string>
   <string name="PLG_REQUIREMENTS_OWN_REQUIREMENTS">Meine Anforderungen</string>
-  <string name="PLG_REQUIREMENTS_OWN_REQUIREMENTS_DESC">Anforderungen, die du zusätzlich zu denen der Organisation für dich selbst verfolgst, zum Beispiel Weiterbildungspflichten deines Arbeitgebers oder einer Berufsberechtigung, und deine eigenen Vorgaben für Anforderungen der Organisation, die für dich über deinen Beruf gelten. Andere Mitglieder sehen sie nicht, Administratoren nur als Gutschriften auf deinen Aktivitäten. Deine Aktivitäten kannst du ihnen wie jeder anderen Anforderung gutschreiben.</string>
+  <string name="PLG_REQUIREMENTS_OWN_REQUIREMENTS_DESC">Anforderungen, die du zusätzlich zu denen der Organisation für dich selbst verfolgst, zum Beispiel Weiterbildungspflichten deines Arbeitgebers oder einer Berufsberechtigung, und deine eigenen Vorgaben für Anforderungen der Organisation, die für dich über deinen Beruf gelten. Andere Mitglieder sehen sie nicht. Die Administratoren der Organisation sehen sie auf deinen Aktivitäten und in der Änderungshistorie, die auch deine Änderungen daran festhält. Deine Aktivitäten kannst du ihnen wie jeder anderen Anforderung gutschreiben.</string>
   <string name="PLG_REQUIREMENTS_OWN_SINCE">Gilt seit</string>
   <string name="PLG_REQUIREMENTS_OWN_SINCE_HELP">Der Tag, ab dem deine Verpflichtung besteht. Für Zeiträume davor ist nichts zu erbringen, der Zeitraum, in den er fällt, wird anteilig berechnet, wenn Teilzeiträume anteilig berechnet werden.</string>
   <string name="PLG_REQUIREMENTS_OWN_TARGET">Eigene Vorgabe</string>

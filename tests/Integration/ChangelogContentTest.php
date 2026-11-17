@@ -262,7 +262,12 @@ final class ChangelogContentTest extends RequirementsDatabaseTestCase
         $this->assertSame('7.5', ChangelogService::formatValue('7.50', 'REQUIREMENTS_CREDITS'));
     }
 
-    public function testAMembersOwnRequirementLeavesNoTrace(): void
+    /**
+     * A member's own requirement, its target and the credits booked to it are logged like any other
+     * record: the member needs the trail of their own changes, and the administrators of the
+     * organization may see everything in it anyway.
+     */
+    public function testAMembersOwnRequirementIsLogged(): void
     {
         global $gDb;
 
@@ -282,14 +287,11 @@ final class ChangelogContentTest extends RequirementsDatabaseTestCase
         $activity = $this->asMember($member['usr_id'], fn(): Activity =>
             $this->createCreditedActivity($member['usr_id'], $type, '2026-03-01', 3.0));
 
-        foreach (array('req_requirement_types', 'req_requirement_role_rules') as $table) {
-            $this->assertSame(array(), $this->entriesSince($before, $table), $table);
+        foreach (array('req_requirement_types', 'req_requirement_role_rules', 'req_activity_credits', 'req_activities') as $table) {
+            $this->assertNotSame(array(), $this->entriesSince($before, $table), $table);
         }
-        $this->assertSame(array(), array_filter(
-            $this->entriesSince($before, 'req_activity_credits'),
-            static fn(array $e): bool => true
-        ), 'The credit towards a private requirement would name it.');
-        $this->assertNotSame(array(), $this->entriesSince($before, 'req_activities'), 'The activity itself is logged.');
+        $credits = $this->entriesSince($before, 'req_activity_credits');
+        $this->assertSame((string) $type->getValue('rqt_uuid'), $credits[0]['log_related_id']);
         $this->assertGreaterThan(0, (int) $activity->getValue('rqa_id'));
     }
 

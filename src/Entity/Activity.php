@@ -12,7 +12,6 @@ use AdmidioPlugin\Requirements\RequirementsPlugin;
 final class Activity extends Entity
 {
     use OrganizationScope;
-    use Loggable;
 
     public function __construct(Database $database, int|string $id = '')
     {
@@ -27,11 +26,6 @@ final class Activity extends Entity
     public function getHookId(): ?string
     {
         return 'requirements_activity';
-    }
-
-    protected function isPrivateRecord(): bool
-    {
-        return false;
     }
 
     /**

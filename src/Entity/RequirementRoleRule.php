@@ -11,7 +11,6 @@ use AdmidioPlugin\Requirements\Database\RequirementsTables;
 final class RequirementRoleRule extends Entity
 {
     use OrganizationScope;
-    use Loggable;
 
     public function __construct(Database $database, int|string $id = '')
     {
@@ -30,16 +29,6 @@ final class RequirementRoleRule extends Entity
     public function getHookId(): ?string
     {
         return 'requirements_requirement_role_rule';
-    }
-
-    /**
-     * A member's own target and the rules of a requirement the member tracks for themselves stay out
-     * of the change history.
-     */
-    protected function isPrivateRecord(): bool
-    {
-        return (int) $this->getValue('rrr_usr_id') > 0
-            || $this->isOwnRequirementType((int) $this->getValue('rrr_requirement_type_id'));
     }
 
     /**

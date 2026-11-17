@@ -86,11 +86,13 @@ class RulePresenter extends RequirementsPresenter
                 'bi-plus-circle-fill'
             );
         }
+        // Core shows the entry to whoever may read the tables: administrators all of it, a member
+        // with a core that lets them read their own changes (see plugin.php) the trail of those.
+        $this->addHistoryMenuItem(
+            'rules',
+            array('req_requirement_types', 'req_requirement_role_rules')
+        );
         if ($isAdmin) {
-            $this->addHistoryMenuItem(
-                'rules',
-                array('req_requirement_types', 'req_requirement_role_rules')
-            );
             $this->addSettingsMenuItem();
         }
 

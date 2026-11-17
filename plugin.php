@@ -344,5 +344,26 @@ ChangelogService::registerCallback('getPermittedTables', '', static function ($u
     );
 });
 
+// Every member may read the changes they made themselves - to their activities, their own
+// requirements and targets, the providers they created - which is the trail of their own records.
+// Core restricts these entries to their author unless the reader holds the requirements right.
+// A core before this callback does not know it, and a member then has no change history.
+if (method_exists(ChangelogService::class, 'getOwnChangeTables')) {
+    ChangelogService::registerCallback('getOwnChangeTables', '', static function ($user): array {
+        global $gCurrentUser;
+
+        // isUsableByCurrentUser() answers for the current user only, see getPermittedTables below.
+        return (int) $user->getValue('usr_id') === (int) $gCurrentUser->getValue('usr_id')
+            && RequirementsPlugin::isUsableByCurrentUser() ? array(
+            'req_providers',
+            'req_activities',
+            'req_requirement_types',
+            'req_requirement_role_rules',
+            'req_activity_credits',
+            'req_activity_files'
+        ) : array();
+    });
+}
+
 // The fulfilment overview of the activity list, on the overview page as well.
 RequirementsPlugin::registerWidget();

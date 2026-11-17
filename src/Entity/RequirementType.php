@@ -8,7 +8,6 @@ use AdmidioPlugin\Requirements\Database\RequirementsTables;
 final class RequirementType extends Entity
 {
     use OrganizationScope;
-    use Loggable;
 
     public function __construct(Database $database, int|string $id = '')
     {
@@ -23,11 +22,6 @@ final class RequirementType extends Entity
     public function getHookId(): ?string
     {
         return 'requirements_requirement_type';
-    }
-
-    protected function isPrivateRecord(): bool
-    {
-        return (int) $this->getValue('rqt_usr_id') > 0;
     }
 
     public function getIgnoredLogColumns(): array

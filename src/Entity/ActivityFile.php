@@ -20,7 +20,6 @@ use AdmidioPlugin\Requirements\Database\RequirementsTables;
 final class ActivityFile extends Entity
 {
     use OrganizationScope;
-    use Loggable;
 
     public function __construct(Database $database, int|string $id = '')
     {
@@ -39,11 +38,6 @@ final class ActivityFile extends Entity
     public function getHookId(): ?string
     {
         return 'requirements_activity_file';
-    }
-
-    protected function isPrivateRecord(): bool
-    {
-        return false;
     }
 
     public function getIgnoredLogColumns(): array
