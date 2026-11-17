@@ -232,6 +232,7 @@
   <string name="PLG_REQUIREMENTS_THEREOF">Thereof</string>
   <string name="PLG_REQUIREMENTS_THEREOF_EXCEEDS">The credits for &quot;#VAR1#&quot; cannot exceed those for &quot;#VAR2#&quot; on the same activity, because they are a part of them.</string>
   <string name="PLG_REQUIREMENTS_THEREOF_NEEDS_PARENT">Credits for &quot;#VAR1#&quot; are part of the credits for &quot;#VAR2#&quot;: enter those for the same period on the same activity as well.</string>
+  <string name="PLG_REQUIREMENTS_TOTALS">Totals per credited period</string>
   <string name="PLG_REQUIREMENTS_VALIDITY">Validity</string>
   <string name="PLG_REQUIREMENTS_VALID_FROM">Valid from</string>
   <string name="PLG_REQUIREMENTS_VALID_UNTIL">Valid until</string>

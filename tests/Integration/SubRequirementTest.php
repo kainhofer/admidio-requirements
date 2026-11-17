@@ -5,6 +5,7 @@ use AdmidioPlugin\Requirements\Database\RequirementsTables;
 use AdmidioPlugin\Requirements\Entity\Activity;
 use AdmidioPlugin\Requirements\Entity\ActivityCredit;
 use AdmidioPlugin\Requirements\Entity\RequirementType;
+use AdmidioPlugin\Requirements\Service\ActivityExportService;
 use AdmidioPlugin\Requirements\Service\ActivityService;
 use AdmidioPlugin\Requirements\Service\RequirementTypeService;
 use AdmidioPlugin\Requirements\Tests\Support\RequirementsDatabaseTestCase;
@@ -336,5 +337,35 @@ final class SubRequirementTest extends RequirementsDatabaseTestCase
         // The reviewer (the current user) accepts less than the member's personal part: no refusal that
         // would name the member's requirement.
         $this->assertSame(1, (new ActivityService($this->getDatabase()))->acceptCredits(array($parentCreditId => 6.0)));
+    }
+
+    /**
+     * A requirement is fulfilled by the totals of a period, and its part by the "thereof" of those
+     * totals: the PDF prints them before the activities, the parts under their parent.
+     */
+    public function testTheTotalsOfAPeriodCarryTheTotalsOfItsParts(): void
+    {
+        [$parent, $part, $userId] = $this->pair('req_sub_totals');
+        $first = $this->activity($userId);
+        $this->credit($first, $parent, 25.0, 20.0);
+        $this->credit($first, $part, 15.0);
+        $second = $this->activity($userId);
+        $this->credit($second, $parent, 10.0);
+        $this->credit($second, $part, 4.0);
+
+        $filter = array('userId' => $userId);
+        $export = new ActivityExportService($this->getDatabase());
+        $totals = $export->totals((new ActivityService($this->getDatabase()))->findActivityRows($filter)['rows']);
+
+        $this->assertCount(1, $totals, 'One total for the requirement and its period; the part is no total of its own.');
+        $this->assertSame('2026-01-01', $totals[0]['reference']);
+        $this->assertSame(35.0, $totals[0]['claimed']);
+        $this->assertSame(30.0, $totals[0]['credited'], 'The accepted amount counts where there is one.');
+        $this->assertSame(
+            array((string) $part->getValue('rqt_short_name') => array('claimed' => 19.0, 'credited' => 19.0)),
+            $totals[0]['parts']
+        );
+
+        $this->assertStringStartsWith('%PDF', $export->pdf($filter, 'Activities'));
     }
 }

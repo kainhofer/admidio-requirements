@@ -19,6 +19,9 @@ final class ActivityPdfBuilder
      *        one entry per column, as plain text with line breaks, which is escaped here
      * @param array<int,array{cells:array<int,string>,certificates:array<int,array{name:string,path:string,mime:string}>}> $rows
      * @param string $certificatesHeading what stands above a certificate page, followed by the activity
+     * @param array{heading?:string,columns?:array<int,array{label:string}>,rows?:array<int,array<int,string>>} $summary
+     *        a table printed before the activities - the totals the activities add up to - with a
+     *        heading of its own; left out when it has no rows
      * @return string the PDF
      */
     public static function build(
@@ -26,7 +29,8 @@ final class ActivityPdfBuilder
         array $columns,
         array $rows,
         string $certificatesHeading,
-        ?string $language = null
+        ?string $language = null,
+        array $summary = array()
     ): string {
         // The heading of the document class is printed at the top of every page, certificate pages
         // included, and a list of activities needs none: the table says what it is. The title still
@@ -34,19 +38,14 @@ final class ActivityPdfBuilder
         $pdf = PdfUtils::createDocument('L', '', $language);
         $pdf->setTitle($heading);
 
-        $html = '<table border="1" cellpadding="3"><thead><tr>';
-        foreach ($columns as $column) {
-            $html .= '<th style="font-weight:bold;background-color:#C7C7C7;">' . self::text($column['label']) . '</th>';
+        // One piece of HTML: a second writeTable() would start at the top of the region again.
+        $html = '';
+        if (($summary['rows'] ?? array()) !== array()) {
+            $html .= '<p style="font-weight:bold;">' . self::text((string) ($summary['heading'] ?? '')) . '</p>'
+                . self::table($summary['columns'] ?? array(), $summary['rows'])
+                . '<p style="font-weight:bold;">' . self::text($heading) . '</p>';
         }
-        $html .= '</tr></thead><tbody>';
-        foreach ($rows as $row) {
-            $html .= '<tr>';
-            foreach ($row['cells'] as $cell) {
-                $html .= '<td>' . self::text($cell) . '</td>';
-            }
-            $html .= '</tr>';
-        }
-        $html .= '</tbody></table>';
+        $html .= self::table($columns, array_column($rows, 'cells'));
         $pdf->writeTable($html);
 
         foreach ($rows as $row) {
@@ -56,6 +55,29 @@ final class ActivityPdfBuilder
         }
 
         return $pdf->getOutPDFString();
+    }
+
+    /**
+     * A table with a grey heading row; each cell is plain text with line breaks.
+     *
+     * @param array<int,array{label:string}> $columns
+     * @param array<int,array<int,string>> $rows
+     */
+    private static function table(array $columns, array $rows): string
+    {
+        $html = '<table border="1" cellpadding="3"><thead><tr>';
+        foreach ($columns as $column) {
+            $html .= '<th style="font-weight:bold;background-color:#C7C7C7;">' . self::text($column['label']) . '</th>';
+        }
+        $html .= '</tr></thead><tbody>';
+        foreach ($rows as $cells) {
+            $html .= '<tr>';
+            foreach ($cells as $cell) {
+                $html .= '<td>' . self::text($cell) . '</td>';
+            }
+            $html .= '</tr>';
+        }
+        return $html . '</tbody></table>';
     }
 
     /**

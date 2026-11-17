@@ -232,6 +232,7 @@
   <string name="PLG_REQUIREMENTS_THEREOF">Davon</string>
   <string name="PLG_REQUIREMENTS_THEREOF_EXCEEDS">Die Punkte für &quot;#VAR1#&quot; dürfen die für &quot;#VAR2#&quot; derselben Aktivität nicht übersteigen, weil sie ein Teil davon sind.</string>
   <string name="PLG_REQUIREMENTS_THEREOF_NEEDS_PARENT">Die Punkte für &quot;#VAR1#&quot; sind Teil der Punkte für &quot;#VAR2#&quot;: Erfasse diese für denselben Zeitraum derselben Aktivität ebenfalls.</string>
+  <string name="PLG_REQUIREMENTS_TOTALS">Summen je angerechnetem Zeitraum</string>
   <string name="PLG_REQUIREMENTS_VALIDITY">Gültigkeit</string>
   <string name="PLG_REQUIREMENTS_VALID_FROM">Gültig ab</string>
   <string name="PLG_REQUIREMENTS_VALID_UNTIL">Gültig bis</string>

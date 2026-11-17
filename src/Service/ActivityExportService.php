@@ -89,6 +89,13 @@ final class ActivityExportService
             ? '' : \DateTimeImmutable::createFromFormat('!Y-m-d', $value)->format($format);
         $time = static fn(?string $value): string => substr((string) $value, 0, 5);
         $number = static fn(mixed $value): string => rtrim(rtrim(number_format((float) $value, 2, '.', ''), '0'), '.');
+        // Claimed, and where a reviewer accepted something else, what counts after it. The core fonts
+        // of the PDF have no arrow, so the two are joined by "->".
+        $amount = static fn(mixed $claimed, mixed $credited): string => (float) $credited === (float) $claimed
+            ? $number($claimed) : $number($claimed) . ' -> ' . $number($credited);
+        // A part, indented under its parent. Non-breaking spaces, because HTML collapses others.
+        $thereof = static fn(array $part): string => "\u{00A0}\u{00A0}\u{00A0}– "
+            . $gL10n->get('PLG_REQUIREMENTS_THEREOF') . ' ' . self::label($part);
         $statusKeys = array(
             'draft' => 'PLG_REQUIREMENTS_STATUS_DRAFT',
             'submitted' => 'PLG_REQUIREMENTS_STATUS_SUBMITTED',
@@ -126,22 +133,26 @@ final class ActivityExportService
                 $when .= '–' . $time($a['rqa_end_time']);
             }
 
-            $creditLines = array();
-            foreach ($credits[$activityId] ?? array() as $credit) {
-                $kind = FulfilmentService::periodControlKindFor(
-                    (string) $credit['rqt_period_anchor'],
-                    (string) $credit['rqt_period_unit']
-                );
-                $period = FulfilmentService::periodControlValue($kind, (string) $credit['rac_period_reference']);
-                $line = ((string) $credit['rqt_short_name'] !== '' ? $credit['rqt_short_name'] : $credit['rqt_name'])
-                    . ' (' . ($period['quarter'] !== '' ? $period['value'] . ' Q' . $period['quarter'] : $period['value']) . '): '
-                    . $number($credit['rac_credits_claimed']);
-                if ($credit['rac_credits_accepted'] !== null
-                    && (float) $credit['rac_credits_accepted'] !== (float) $credit['rac_credits_claimed']) {
-                    $line .= ' → ' . $number($credit['rac_credits_accepted']);
+            // A part ("thereof in person") is a line under its parent's, as on the screen; one whose
+            // parent has no credit in that period on this activity stands on its own.
+            $activityCredits = $credits[$activityId] ?? array();
+            $lines = array();
+            foreach ($activityCredits as $credit) {
+                if ($this->carriedByParent($credit, $activityCredits)) {
+                    continue;
                 }
-                $creditLines[] = $line;
+                $lines[$credit['rqt_id'] . '|' . $credit['rac_period_reference']] = array(
+                    self::label($credit) . ' (' . self::periodLabel($credit) . '): '
+                    . $amount($credit['rac_credits_claimed'], $credit['rac_credits_accepted'] ?? $credit['rac_credits_claimed'])
+                );
             }
+            foreach ($activityCredits as $credit) {
+                if ($this->carriedByParent($credit, $activityCredits)) {
+                    $lines[$credit['rqt_parent_id'] . '|' . $credit['rac_period_reference']][] = $thereof($credit)
+                        . ': ' . $amount($credit['rac_credits_claimed'], $credit['rac_credits_accepted'] ?? $credit['rac_credits_claimed']);
+                }
+            }
+            $creditLines = $lines === array() ? array() : array_merge(...array_values($lines));
             if ((float) $a['rqa_attendance'] > 0) {
                 $creditLines[] = $gL10n->get('PLG_REQUIREMENTS_ATTENDANCE') . ': ' . $number($a['rqa_attendance']);
             }
@@ -192,13 +203,139 @@ final class ActivityExportService
             $rows[] = array('cells' => $cells, 'certificates' => $certificates);
         }
 
+        $summaryColumns = array();
+        if ($admin) {
+            $summaryColumns[] = array('label' => $gL10n->get('SYS_MEMBER'));
+        }
+        array_push(
+            $summaryColumns,
+            array('label' => $gL10n->get('PLG_REQUIREMENTS_CREDITED_PERIOD')),
+            array('label' => $gL10n->get('PLG_REQUIREMENTS_REQUIREMENT_TYPE')),
+            array('label' => $gL10n->get('PLG_REQUIREMENTS_CREDITS'))
+        );
+        $summaryRows = array();
+        foreach ($this->totals($listed['rows']) as $total) {
+            $cells = $admin ? array($total['member']) : array();
+            array_push(
+                $cells,
+                $total['period'],
+                implode("\n", array_merge(array($total['requirement']), array_map(
+                    static fn(string $part): string => $thereof(array('rqt_short_name' => $part)),
+                    array_keys($total['parts'])
+                ))),
+                implode("\n", array_map(
+                    static fn(array $t): string => $amount($t['claimed'], $t['credited']),
+                    array_merge(array($total), array_values($total['parts']))
+                ))
+            );
+            $summaryRows[] = $cells;
+        }
+
         return ActivityPdfBuilder::build(
             $heading,
             $columns,
             $rows,
             $gL10n->get('PLG_REQUIREMENTS_FILES'),
-            $gL10n->getLanguageIsoCode()
+            $gL10n->getLanguageIsoCode(),
+            array('heading' => $gL10n->get('PLG_REQUIREMENTS_TOTALS'), 'columns' => $summaryColumns, 'rows' => $summaryRows)
         );
+    }
+
+    /**
+     * The totals the rows of the activity list add up to, per member, requirement and credited
+     * period, each with the totals of its parts ("thereof") - a requirement is fulfilled by these
+     * sums, and the activities are their detail. A part is totalled under its parent where the parent
+     * carries it, and as a requirement of its own where it is a row of its own.
+     *
+     * @param array<int,array<string,mixed>> $rows as ActivityService::findActivityRows() returns them
+     * @return array<int,array{member:string,requirement:string,reference:string,period:string,
+     *     claimed:float,credited:float,parts:array<string,array{claimed:float,credited:float}>}>
+     *     by member, newest period first, then requirement; the parts keyed by their name
+     * @throws Exception
+     */
+    public function totals(array $rows): array
+    {
+        $parts = array();
+        $activityIds = array_values(array_unique(array_map('intval', array_column($rows, 'rqa_id'))));
+        foreach (array_chunk($activityIds, self::CHUNK) as $chunk) {
+            $parts += (new ActivityService($this->db))->findPartCredits($chunk);
+        }
+
+        $totals = array();
+        foreach ($rows as $row) {
+            if ($row['rac_id'] === null) {
+                continue;
+            }
+            $key = $row['rqa_user_id'] . '|' . $row['rqt_id'] . '|' . $row['rac_period_reference'];
+            $totals[$key] ??= array(
+                'member' => trim($row['last_name'] . ', ' . $row['first_name'], ', '),
+                'requirement' => self::label($row),
+                'reference' => (string) $row['rac_period_reference'],
+                'period' => self::periodLabel($row),
+                'claimed' => 0.0,
+                'credited' => 0.0,
+                'parts' => array()
+            );
+            $totals[$key] = self::addToTotal($totals[$key], $row);
+            foreach ($parts[$row['rqa_id'] . '|' . $row['rqt_id'] . '|' . $row['rac_period_reference']] ?? array() as $part) {
+                $name = self::label($part);
+                $totals[$key]['parts'][$name] = self::addToTotal($totals[$key]['parts'][$name] ?? array(), $part);
+            }
+        }
+        usort($totals, static fn(array $a, array $b): int =>
+            array($a['member'], $b['reference'], $a['requirement']) <=> array($b['member'], $a['reference'], $b['requirement']));
+
+        return $totals;
+    }
+
+    /**
+     * Whether a credit is a part whose parent has a credit in the same period on the same activity,
+     * which then carries it as a "thereof" line.
+     *
+     * @param array<string,mixed> $credit
+     * @param array<int,array<string,mixed>> $activityCredits all credits of the activity
+     */
+    private function carriedByParent(array $credit, array $activityCredits): bool
+    {
+        if ((int) $credit['rqt_parent_id'] === 0) {
+            return false;
+        }
+        foreach ($activityCredits as $other) {
+            if ((int) $other['rqt_id'] === (int) $credit['rqt_parent_id']
+                && $other['rac_period_reference'] === $credit['rac_period_reference']) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Add one credit to a running total of claimed and credited (accepted, else claimed) credits.
+     *
+     * @param array<string,mixed> $total
+     * @param array<string,mixed> $credit with rac_credits_claimed and rac_credits_accepted
+     * @return array<string,mixed>
+     */
+    private static function addToTotal(array $total, array $credit): array
+    {
+        $total['claimed'] = ($total['claimed'] ?? 0.0) + (float) $credit['rac_credits_claimed'];
+        $total['credited'] = ($total['credited'] ?? 0.0)
+            + (float) ($credit['rac_credits_accepted'] ?? $credit['rac_credits_claimed']);
+        return $total;
+    }
+
+    /** A requirement by its short name, or its name where it has none. */
+    private static function label(array $credit): string
+    {
+        return (string) ($credit['rqt_short_name'] ?? '') !== '' ? (string) $credit['rqt_short_name'] : (string) $credit['rqt_name'];
+    }
+
+    /** The credited period of a credit as its control shows it: "2026", "2026 Q2", "2026-03", ... */
+    private static function periodLabel(array $credit): string
+    {
+        $kind = FulfilmentService::periodControlKindFor((string) $credit['rqt_period_anchor'], (string) $credit['rqt_period_unit']);
+        $period = FulfilmentService::periodControlValue($kind, (string) $credit['rac_period_reference']);
+        return $period['quarter'] !== '' ? $period['value'] . ' Q' . $period['quarter'] : $period['value'];
     }
 
     /**
@@ -488,7 +625,7 @@ final class ActivityExportService
     {
         return $this->db->getArrayFromSql(
             'SELECT rac.rac_activity_id, rac.rac_period_reference, rac.rac_credits_claimed, rac.rac_credits_accepted,
-                    rqt.rqt_id, rqt.rqt_name, rqt.rqt_short_name, rqt.rqt_sequence,
+                    rqt.rqt_id, rqt.rqt_parent_id, rqt.rqt_name, rqt.rqt_short_name, rqt.rqt_sequence,
                     rqt.rqt_period_anchor, rqt.rqt_period_unit
                FROM ' . RequirementsTables::activityCredits() . ' AS rac
          INNER JOIN ' . RequirementsTables::requirementTypes() . ' AS rqt ON rqt.rqt_id = rac.rac_requirement_type_id

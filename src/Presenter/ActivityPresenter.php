@@ -715,17 +715,21 @@ class ActivityPresenter extends RequirementsPresenter
             // so a grouped list reads every row it filters, totals the groups, and only then cuts
             // out the page. The groups are runs of consecutive rows, so the cut keeps them whole.
             $result = $service->findActivityRows($this->serviceFilter($filters, $filter), $groupBy, $order);
+            // The parts ride on the rows of their parents, so their totals are those of the parts
+            // of every row of the group - the "thereof" is what decides a part of the requirement.
+            $allParts = $service->findPartCredits(array_column($result['rows'], 'rqa_id'));
             foreach ($result['rows'] as $row) {
                 if ($row['rac_id'] === null) {
                     continue;
                 }
                 $label = $this->groupLabel($row, $groupBy, $filters['granularity'], $filter['type'] === null, $notSet);
                 $requirement = self::requirementName($row);
-                $groupTotals[$label][$requirement]['claimed'] =
-                    ($groupTotals[$label][$requirement]['claimed'] ?? 0.0) + (float) $row['rac_credits_claimed'];
-                $groupTotals[$label][$requirement]['credited'] =
-                    ($groupTotals[$label][$requirement]['credited'] ?? 0.0)
-                    + (float) ($row['rac_credits_accepted'] ?? $row['rac_credits_claimed']);
+                $groupTotals[$label][$requirement] = self::addToTotal($groupTotals[$label][$requirement] ?? array(), $row);
+                foreach ($allParts[$row['rqa_id'] . '|' . $row['rqt_id'] . '|' . $row['rac_period_reference']] ?? array() as $part) {
+                    $partName = self::requirementName($part);
+                    $groupTotals[$label][$requirement]['parts'][$partName] =
+                        self::addToTotal($groupTotals[$label][$requirement]['parts'][$partName] ?? array(), $part);
+                }
             }
             $result['rows'] = array_slice($result['rows'], max(0, $start), $length > 0 ? $length : null);
         }
@@ -989,20 +993,49 @@ class ActivityPresenter extends RequirementsPresenter
      * as that column. A group of several requirements is totalled per requirement, because hours of
      * one requirement and points of another add up to nothing anybody could read.
      *
-     * @param array<string,array{claimed:float,credited:float}> $totals by requirement
+     * The parts of a requirement follow it on lines of their own, as "thereof" - for a period group
+     * they are as much the answer to "was it reached" as the total of the parent.
+     *
+     * @param array<string,array{claimed:float,credited:float,parts?:array<string,array{claimed:float,credited:float}>}> $totals by requirement
      */
     private static function groupTotal(array $totals): string
     {
+        global $gL10n;
+
         if ($totals === array()) {
             return '';
         }
 
-        $parts = array();
+        $blocks = array();
+        $withParts = false;
         foreach ($totals as $requirement => $total) {
             $cell = self::creditsCell($total['claimed'], $total['credited']);
-            $parts[] = count($totals) > 1 ? SecurityUtils::encodeHTML($requirement) . ': ' . $cell : $cell;
+            $block = count($totals) > 1 ? SecurityUtils::encodeHTML($requirement) . ': ' . $cell : $cell;
+            foreach ($total['parts'] ?? array() as $partName => $part) {
+                $withParts = true;
+                $block .= '<div class="small fw-normal text-body-secondary"><i class="bi bi-arrow-return-right"></i> '
+                    . SecurityUtils::encodeHTML($gL10n->get('PLG_REQUIREMENTS_THEREOF') . ' ' . $partName) . ': '
+                    . self::creditsCell($part['claimed'], $part['credited']) . '</div>';
+            }
+            $blocks[] = $block;
         }
-        return implode(' &middot; ', $parts);
+        // With parts, each requirement needs lines of its own; without, one line reads best.
+        return $withParts ? '<div>' . implode('</div><div>', $blocks) . '</div>' : implode(' &middot; ', $blocks);
+    }
+
+    /**
+     * Add one credit row to a running total of claimed and credited (accepted, else claimed) credits.
+     *
+     * @param array{claimed?:float,credited?:float} $total
+     * @param array<string,mixed> $credit with rac_credits_claimed and rac_credits_accepted
+     * @return array{claimed:float,credited:float}
+     */
+    private static function addToTotal(array $total, array $credit): array
+    {
+        $total['claimed'] = ($total['claimed'] ?? 0.0) + (float) $credit['rac_credits_claimed'];
+        $total['credited'] = ($total['credited'] ?? 0.0)
+            + (float) ($credit['rac_credits_accepted'] ?? $credit['rac_credits_claimed']);
+        return $total;
     }
 
     /**
