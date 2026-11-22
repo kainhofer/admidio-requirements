@@ -6,6 +6,9 @@
  *
  * Parameters:
  * mode        : list (default) | data | export | edit | save | submit | delete | file-upload
+ *               | view (read-only pop-up for a reviewer) | review | review-save | review-withdraw
+ *               (the member's review actions; action: submit-activity, submit-period, share,
+ *               rereview, resubmit; review: UUID of a review)
  * uuid        : UUID of the activity for edit / save / delete
  * query       : free-text filter for the activity list
  * requirement : UUID of the requirement type whose credits the list shows
@@ -33,6 +36,10 @@ use Admidio\Infrastructure\Plugins\PluginRegistry;
 use Admidio\Infrastructure\Utils\SecurityUtils;
 use AdmidioPlugin\Requirements\Entity\Activity;
 use AdmidioPlugin\Requirements\Entity\ActivityFile;
+use AdmidioPlugin\Requirements\Entity\RequirementType;
+use AdmidioPlugin\Requirements\Entity\Review;
+use AdmidioPlugin\Requirements\Presenter\ReviewPresenter;
+use AdmidioPlugin\Requirements\Service\ReviewService;
 use AdmidioPlugin\Requirements\Presenter\ActivityPresenter;
 use AdmidioPlugin\Requirements\RequirementsPlugin;
 use AdmidioPlugin\Requirements\Service\ActivityService;
@@ -45,7 +52,8 @@ try {
 
     $getMode = admFuncVariableIsValid($_GET, 'mode', 'string', array(
         'defaultValue' => 'list',
-        'validValues' => array('list', 'data', 'export', 'edit', 'save', 'submit', 'delete', 'file-delete', 'file-upload')
+        'validValues' => array('list', 'data', 'export', 'edit', 'save', 'submit', 'delete', 'file-delete', 'file-upload',
+            'view', 'review', 'review-save', 'review-withdraw')
     ));
     // No defaultValue here: admFuncVariableIsValid() only returns early for a missing parameter
     // when none is set, otherwise it would validate the empty string against the datatype.
@@ -185,10 +193,7 @@ try {
                     'period' => trim((string) ($formValues['period_' . $typeId] ?? '')),
                     'quarter' => trim((string) ($formValues['periodq_' . $typeId] ?? '')),
                     'claimed' => trim((string) $formValues['credit_' . $typeId]) === ''
-                        ? null : (float) $formValues['credit_' . $typeId],
-                    'accepted' => array_key_exists('accepted_' . $typeId, $formValues)
-                        && trim((string) $formValues['accepted_' . $typeId]) !== ''
-                        ? (float) $formValues['accepted_' . $typeId] : null
+                        ? null : (float) $formValues['credit_' . $typeId]
                 );
             }
 
@@ -259,6 +264,90 @@ try {
             echo json_encode(array('status' => 'success'));
             break;
 
+        case 'view':
+            // The read-only pop-up of the review page.
+            echo (new ActivityPresenter())->viewHtml($getUuid, $getRequirement);
+            break;
+
+        case 'review':
+            $page = new ActivityPresenter();
+            $page->createReviewForm(
+                admFuncVariableIsValid($_GET, 'action', 'string', array('requireValue' => true)),
+                $getUuid,
+                admFuncVariableIsValid($_GET, 'review', 'uuid'),
+                $getRequirement,
+                $getPeriod
+            );
+            $gNavigation->addUrl(CURRENT_URL, $page->getHeadline());
+            $page->show();
+            break;
+
+        case 'review-save':
+            $formValues = $gCurrentSession->getFormObject($_POST['adm_csrf_token'])->validate($_POST);
+            $reviewService = new ReviewService($gDb);
+            $message = (string) ($formValues['message'] ?? '');
+            [$reviewerUser, $reviewerRole] = ReviewPresenter::parseReviewerChoice((string) ($formValues['reviewer'] ?? ''));
+            $readActivity = static function () use ($gDb, $getUuid): Activity {
+                $activity = new Activity($gDb);
+                $activity->readDataByUuid($getUuid);
+                if ((int) $activity->getValue('rqa_id') === 0) {
+                    throw new Exception('SYS_INVALID_PAGE_VIEW');
+                }
+                return $activity;
+            };
+            $readReview = static function () use ($gDb): Review {
+                $review = new Review($gDb);
+                $review->readDataByUuid(admFuncVariableIsValid($_GET, 'review', 'uuid', array('requireValue' => true)));
+                if ((int) $review->getValue('rrv_id') === 0) {
+                    throw new Exception('SYS_INVALID_PAGE_VIEW');
+                }
+                return $review;
+            };
+
+            switch (admFuncVariableIsValid($_GET, 'action', 'string', array('requireValue' => true))) {
+                case 'submit-activity':
+                    $reviewService->submitActivity($readActivity(), $reviewerUser, $reviewerRole, $message);
+                    break;
+                case 'submit-period':
+                    $type = new RequirementType($gDb);
+                    $type->readDataByUuid($getRequirement);
+                    if ((int) $type->getValue('rqt_id') === 0) {
+                        throw new Exception('SYS_INVALID_PAGE_VIEW');
+                    }
+                    $reviewService->submitPeriod($type, $getPeriod, $reviewerUser, $reviewerRole, $message);
+                    break;
+                case 'share':
+                    $reviewService->share($readReview(), $message);
+                    break;
+                case 'rereview':
+                    $reviewService->requestReReview($readActivity(), $message);
+                    break;
+                case 'resubmit':
+                    if ($getUuid !== '') {
+                        $reviewService->resubmit($readActivity(), $message);
+                    } else {
+                        $reviewService->resubmitReview($readReview(), $message);
+                    }
+                    break;
+                default:
+                    throw new Exception('SYS_INVALID_PAGE_VIEW');
+            }
+
+            $gNavigation->deleteLastUrl();
+            echo json_encode(array('status' => 'success', 'url' => $gNavigation->getUrl()));
+            break;
+
+        case 'review-withdraw':
+            SecurityUtils::validateCsrfToken($_POST['adm_csrf_token']);
+            $review = new Review($gDb);
+            $review->readDataByUuid(admFuncVariableIsValid($_GET, 'review', 'uuid', array('requireValue' => true)));
+            if ((int) $review->getValue('rrv_id') === 0) {
+                throw new Exception('SYS_INVALID_PAGE_VIEW');
+            }
+            (new ReviewService($gDb))->withdraw($review);
+            echo json_encode(array('status' => 'success'));
+            break;
+
         case 'file-upload':
             // Certificates dropped onto the files cell of the activity list.
             SecurityUtils::validateCsrfToken($_POST['adm_csrf_token']);
@@ -291,5 +380,6 @@ try {
             break;
     }
 } catch (Throwable $e) {
-    handleException($e, in_array($getMode ?? '', array('data', 'save', 'submit', 'delete', 'file-delete', 'file-upload')));
+    handleException($e, in_array($getMode ?? '', array('data', 'save', 'submit', 'delete', 'file-delete', 'file-upload',
+        'review-save', 'review-withdraw')), ($getMode ?? '') === 'view');
 }

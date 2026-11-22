@@ -24,6 +24,19 @@
             {include 'sys-template-parts/form.select.tpl' data=$elements['rqt_multiple_roles_mode']}
         </div>
     </div>
+    {if $showReviewMode}
+        <div class="card admidio-field-group">
+            <div class="card-header">{$l10n->get('PLG_REQUIREMENTS_REVIEW')}</div>
+            <div class="card-body">
+                {if $reviewModeOfParent}
+                    <p class="text-muted">{$l10n->get('PLG_REQUIREMENTS_REVIEW_MODE_OF_PARENT')}</p>
+                {else}
+                    {include 'sys-template-parts/form.select.tpl' data=$elements['rqt_review_mode']}
+                    {include 'sys-template-parts/form.input.tpl' data=$elements['rqt_review_due_days']}
+                {/if}
+            </div>
+        </div>
+    {/if}
     <div class="form-alert" style="display: none;">&nbsp;</div>
     {include 'sys-template-parts/form.button.tpl' data=$elements['adm_button_save']}
     {include file="sys-template-parts/system.info-create-edit.tpl"}

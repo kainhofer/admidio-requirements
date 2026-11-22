@@ -90,14 +90,16 @@ final class ChangelogContentTest extends RequirementsDatabaseTestCase
 
     private function saveCredit(Activity $activity, RequirementType $type, float $claimed, ?float $accepted = null): void
     {
-        (new ActivityService($this->getDatabase()))->saveCredit(
+        $credit = (new ActivityService($this->getDatabase()))->saveCredit(
             new ActivityCredit($this->getDatabase(), $this->creditId($activity, $type)),
             $activity,
             $type,
             '2026-03-01',
-            $claimed,
-            $accepted
+            $claimed
         );
+        if ($accepted !== null) {
+            $this->setAccepted($credit, $accepted);
+        }
     }
 
     private function creditId(Activity $activity, RequirementType $type): int
@@ -131,8 +133,7 @@ final class ChangelogContentTest extends RequirementsDatabaseTestCase
         $this->saveCredit($activity, $type, 6.0, 0.0);
 
         $entries = $this->entriesSince($before, 'req_activity_credits');
-        $this->assertCount(1, $entries, 'A rejection is a change.');
-        $this->assertSame('rac_credits_accepted', $entries[0]['log_field']);
+        $this->assertContains('rac_credits_accepted', array_column($entries, 'log_field'), 'A rejection is a change.');
     }
 
     public function testACreditEntryIsNamedAfterItsActivityAndRelatedToItsRequirement(): void

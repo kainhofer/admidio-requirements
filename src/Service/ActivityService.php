@@ -29,7 +29,6 @@ final class ActivityService
     );
 
     public const STATUSES = array('draft', 'submitted', 'withdrawn');
-    public const REVIEW_STATUSES = array('', 'open', 'accepted', 'partially_accepted', 'not_accepted', 'clarification');
 
     /** Nesting depth of credit writes whose sub-requirement check waits for the end of the batch. */
     private int $deferredChecks = 0;
@@ -43,6 +42,7 @@ final class ActivityService
         global $gCurrentOrgId, $gCurrentUser;
 
         $isNew = $activity->isNewRecord();
+        $previousStatus = (string)$activity->getValue('rqa_status', 'database');
         if ($isNew && !RequirementsPlugin::isUsableByCurrentUser()) {
             throw new Exception('SYS_NO_RIGHTS');
         }
@@ -96,21 +96,22 @@ final class ActivityService
                 }
                 $activity->setValue('rqa_status', $status);
             }
-            if (array_key_exists('rqa_review_status', $values)) {
-                $reviewStatus = (string)$values['rqa_review_status'];
-                if (!in_array($reviewStatus, self::REVIEW_STATUSES, true)) {
-                    throw new Exception('SYS_INVALID_PAGE_VIEW');
-                }
-                $activity->setValue('rqa_review_status', $reviewStatus === '' ? null : $reviewStatus);
-            }
-            if (array_key_exists('rqa_review_comments', $values)) {
-                $activity->setValue('rqa_review_comments', trim((string)$values['rqa_review_comments']));
-            }
         }
+
+        // The member changing an activity whose credits are under review or decided: the decisions
+        // stay, but a reviewer is shown that the activity changed since.
+        $changedByOwner = !$isNew && $activity->hasColumnsValueChanged()
+            && (int)$activity->getValue('rqa_user_id') === (int)$gCurrentUser->getValue('usr_id');
 
         $this->db->startTransaction();
         try {
             $activity->save();
+            if ($changedByOwner) {
+                (new ReviewService($this->db))->markChangedByOwner((int)$activity->getValue('rqa_id'));
+            }
+            if (!$isNew && $previousStatus === 'draft' && (string)$activity->getValue('rqa_status') === 'submitted') {
+                (new ReviewService($this->db))->activitySubmitted($activity);
+            }
             $this->db->endTransaction();
         } catch (Throwable $exception) {
             $this->db->rollback();
@@ -128,7 +129,7 @@ final class ActivityService
      * first few credits committed when a later one is rejected. The database counts nested
      * transactions, so the inner save()/syncCredit() calls join this one instead of committing.
      *
-     * @param array<int,array{period:string,quarter:string,claimed:?float,accepted:?float}> $creditInput
+     * @param array<int,array{period:string,quarter:string,claimed:?float}> $creditInput
      *        keyed by requirement type id; `period`/`quarter` are the raw values of the
      *        credited-period control, resolved here because that needs the requirement type.
      * @throws Exception
@@ -153,11 +154,11 @@ final class ActivityService
                 // Only resolve the period control when a value is actually being written; an
                 // untouched row must not fail validation.
                 $periodDate = null;
-                if ($input['period'] !== '' && ($input['claimed'] !== null || $input['accepted'] !== null)) {
+                if ($input['period'] !== '' && $input['claimed'] !== null) {
                     $periodDate = FulfilmentService::periodInputToDate($type, $input['period'], $input['quarter']);
                 }
 
-                $this->syncCredit($activity, $type, $periodDate, $input['claimed'], $input['accepted']);
+                $this->syncCredit($activity, $type, $periodDate, $input['claimed']);
             }
 
             // Whatever order the rows came in, the parts have to fit their parents once all are written.
@@ -249,10 +250,9 @@ final class ActivityService
         Activity $activity,
         RequirementType $requirementType,
         string $periodReference,
-        float $claimed,
-        ?float $accepted = null
+        float $claimed
     ): ActivityCredit {
-        global $gCurrentOrgId;
+        global $gCurrentOrgId, $gCurrentUser;
 
         if (!$activity->isEditable()
             || (int)$activity->getValue('rqa_id') === 0
@@ -278,7 +278,7 @@ final class ActivityService
             throw new Exception('SYS_INVALID_PAGE_VIEW');
         }
 
-        if ($claimed < 0 || ($accepted !== null && $accepted < 0)) {
+        if ($claimed < 0) {
             throw new Exception('SYS_INVALID_PAGE_VIEW');
         }
 
@@ -289,15 +289,24 @@ final class ActivityService
         $credit->setValue('rac_period_reference', $periodReference);
         $credit->setValue('rac_credits_claimed', number_format($claimed, 2, '.', ''));
 
-        if (Component::isAdministrable(RequirementsPlugin::ID)) {
-            $credit->setValue(
-                'rac_credits_accepted',
-                $accepted === null ? null : number_format($accepted, 2, '.', '')
-            );
-        } elseif (!$credit->isNewRecord() && $credit->getValue('rac_credits_accepted', 'database') !== null) {
-            // A member editing an existing claim must never clear or replace the reviewer's accepted value.
-        } else {
+        // The accepted amount and the review status are the reviewer's (ReviewService). A new credit
+        // starts undecided - in the queue mode open, once its activity is submitted - and a changed
+        // claim keeps the decision but tells the reviewer that it changed.
+        $reviews = new ReviewService($this->db);
+        $changedByOwner = false;
+        if ($credit->isNewRecord()) {
             $credit->setValue('rac_credits_accepted', null);
+            $credit->setValue('rac_review_status', $reviews->initialCreditStatus(
+                (int)$requirementType->getValue('rqt_id'),
+                (string)$activity->getValue('rqa_status', 'database')
+            ));
+        } elseif ($credit->hasColumnsValueChanged()
+            && (int)$activity->getValue('rqa_user_id') === (int)$gCurrentUser->getValue('usr_id')) {
+            $status = (string)$credit->getValue('rac_review_status', 'database');
+            $changedByOwner = $status !== '' && $status !== ReviewService::CREDIT_CLARIFICATION;
+        }
+        if ($changedByOwner) {
+            $credit->setValue('rac_review_changed', DATETIME_NOW);
         }
 
         $this->db->startTransaction();
@@ -335,6 +344,7 @@ final class ActivityService
         try {
             $activity->setValue('rqa_status', 'submitted');
             $activity->save();
+            (new ReviewService($this->db))->activitySubmitted($activity);
             $this->db->endTransaction();
         } catch (Throwable $exception) {
             $this->db->rollback();
@@ -378,9 +388,9 @@ final class ActivityService
             (int) $gProfileFields->getProperty('FIRST_NAME', 'usf_id'),
             (int) $gProfileFields->getProperty('LAST_NAME', 'usf_id')
         );
-        $creditColumns = 'NULL AS rac_period_reference, NULL AS rac_credits_claimed, NULL AS rac_credits_accepted';
+        $creditColumns = 'NULL AS rac_period_reference, NULL AS rac_credits_claimed, NULL AS rac_credits_accepted, NULL AS rac_review_status';
         if ($requirementTypeId !== null) {
-            $creditColumns = 'rac.rac_period_reference, rac.rac_credits_claimed, rac.rac_credits_accepted';
+            $creditColumns = 'rac.rac_period_reference, rac.rac_credits_claimed, rac.rac_credits_accepted, rac.rac_review_status';
 
             // Narrowed to a requirement, the list is the activities that count towards it, and with
             // a period those that made up that bar: an activity without a credit for it is not
@@ -399,7 +409,7 @@ final class ActivityService
         }
 
         $sql = 'SELECT rqa.rqa_id, rqa.rqa_uuid, rqa.rqa_org_id, rqa.rqa_user_id, rqa.rqa_title, rqa.rqa_begin_date,
-                       rqa.rqa_end_date, rqa.rqa_status, rqa.rqa_review_status,
+                       rqa.rqa_end_date, rqa.rqa_status,
                        rqa.rqa_provider_name, rqa.rqa_provider_short_name,
                        usr.usr_uuid AS user_uuid,
                        first_name.usd_value AS first_name, last_name.usd_value AS last_name,
@@ -596,10 +606,11 @@ final class ActivityService
 
         $sql = 'SELECT rqa.rqa_id, rqa.rqa_uuid, rqa.rqa_org_id, rqa.rqa_user_id, rqa.rqa_title,
                        rqa.rqa_begin_date, rqa.rqa_end_date, rqa.rqa_certificate_date, rqa.rqa_attendance,
-                       rqa.rqa_status, rqa.rqa_review_status, rqa.rqa_provider_name, rqa.rqa_provider_short_name,
+                       rqa.rqa_status, rqa.rqa_provider_name, rqa.rqa_provider_short_name,
                        usr.usr_uuid AS user_uuid,
                        first_name.usd_value AS first_name, last_name.usd_value AS last_name,
                        rac.rac_id, rac.rac_period_reference, rac.rac_credits_claimed, rac.rac_credits_accepted,
+                       rac.rac_review_status, rac.rac_review_comment, rac.rac_review_changed,
                        rqt.rqt_id, rqt.rqt_name, rqt.rqt_short_name, rqt.rqt_period_anchor, rqt.rqt_period_unit'
             . $from . ' ORDER BY ' . implode(', ', $orderBy);
         if ($length > 0) {
@@ -647,7 +658,8 @@ final class ActivityService
     {
         $rows = $this->db->getArrayFromSql(
             'SELECT rac_id, rac_requirement_type_id, rac_period_reference,
-                    rac_credits_claimed, rac_credits_accepted
+                    rac_credits_claimed, rac_credits_accepted, rac_review_status, rac_review_comment,
+                    rac_review_changed
                FROM ' . RequirementsTables::activityCredits() . '
               WHERE rac_activity_id = ?',
             array($activityId)
@@ -662,7 +674,8 @@ final class ActivityService
 
     /**
      * Create, update or remove the credit contribution of one activity for one requirement type.
-     * An empty or non-positive claimed value with no reviewer acceptance removes the row.
+     * An empty or non-positive claimed value removes the row; deleteCredit() refuses that for a credit
+     * a reviewer has decided on or is looking at.
      *
      * @throws Exception
      */
@@ -670,13 +683,12 @@ final class ActivityService
         Activity $activity,
         RequirementType $requirementType,
         ?string $periodReference,
-        ?float $claimed,
-        ?float $accepted = null
+        ?float $claimed
     ): void {
         $existing = $this->creditsForActivity((int) $activity->getValue('rqa_id'));
         $current = $existing[(int) $requirementType->getValue('rqt_id')] ?? null;
 
-        $wantsRow = ($claimed !== null && $claimed > 0.0) || $accepted !== null;
+        $wantsRow = $claimed !== null && $claimed > 0.0;
 
         if (!$wantsRow) {
             if ($current !== null) {
@@ -693,75 +705,8 @@ final class ActivityService
             $periodReference === null || $periodReference === ''
                 ? (string) $activity->getValue('rqa_begin_date', 'database')
                 : $periodReference,
-            $claimed ?? 0.0,
-            $accepted
+            $claimed ?? 0.0
         );
-    }
-
-    /**
-     * Set the accepted credits of several contributions at once - the write half of the review view.
-     *
-     * §14 restricts accepted-credit writes to administrators, and the rows go through saveCredit(),
-     * so the record checks, the normalisation and the changelog entry are the ones the activity form
-     * already produces. What this adds is the transaction around the loop: a review pass is one
-     * decision about a period, and half of it landing is worse than none of it.
-     *
-     * A value that already stands is skipped rather than rewritten, so an untouched row produces no
-     * changelog entry and the returned count says what the pass actually changed.
-     *
-     * @param array<int,float|null> $accepted credit id => accepted credits, null clears the acceptance
-     * @return int how many rows changed
-     * @throws Exception
-     */
-    public function acceptCredits(array $accepted): int
-    {
-        if (!RequirementsPlugin::isUsableByCurrentUser()
-            || !Component::isAdministrable(RequirementsPlugin::ID)) {
-            throw new Exception('SYS_NO_RIGHTS');
-        }
-
-        $changed = 0;
-        $touched = array();
-        $this->db->startTransaction();
-        ++$this->deferredChecks;
-        try {
-            foreach ($accepted as $creditId => $value) {
-                // OrganizationScope answers a credit of another organization with an empty record.
-                $credit = new ActivityCredit($this->db, (int) $creditId);
-                if ((int) $credit->getValue('rac_id') === 0) {
-                    throw new Exception('SYS_NO_RIGHTS');
-                }
-
-                $stored = $credit->getValue('rac_credits_accepted', 'database');
-                // An unset decimal column reads as '' until the record has been read back.
-                $stored = ($stored === null || $stored === '') ? null : (float) $stored;
-                if ($stored === $value) {
-                    continue;
-                }
-
-                $this->saveCredit(
-                    $credit,
-                    new Activity($this->db, (int) $credit->getValue('rac_activity_id')),
-                    new RequirementType($this->db, (int) $credit->getValue('rac_requirement_type_id')),
-                    (string) $credit->getValue('rac_period_reference', 'database'),
-                    (float) $credit->getValue('rac_credits_claimed', 'database'),
-                    $value
-                );
-                $touched[(int) $credit->getValue('rac_activity_id')] = true;
-                ++$changed;
-            }
-            foreach (array_keys($touched) as $activityId) {
-                $this->assertSubRequirements(new Activity($this->db, $activityId));
-            }
-            $this->db->endTransaction();
-        } catch (Throwable $exception) {
-            $this->db->rollback();
-            throw $exception;
-        } finally {
-            --$this->deferredChecks;
-        }
-
-        return $changed;
     }
 
     /**
@@ -781,8 +726,9 @@ final class ActivityService
         }
 
         $rows = $this->db->getArrayFromSql(
-            'SELECT rac.rac_activity_id, rac.rac_period_reference, rac.rac_credits_claimed, rac.rac_credits_accepted,
-                    rqt.rqt_parent_id, rqt.rqt_name, rqt.rqt_short_name
+            'SELECT rac.rac_id, rac.rac_activity_id, rac.rac_period_reference, rac.rac_credits_claimed, rac.rac_credits_accepted,
+                    rac.rac_review_status, rac.rac_review_comment, rac.rac_review_changed,
+                    rqt.rqt_id, rqt.rqt_usr_id, rqt.rqt_parent_id, rqt.rqt_name, rqt.rqt_short_name
                FROM ' . RequirementsTables::activityCredits() . ' AS rac
          INNER JOIN ' . RequirementsTables::requirementTypes() . ' AS rqt ON rqt.rqt_id = rac.rac_requirement_type_id
               WHERE rqt.rqt_parent_id IS NOT NULL
@@ -841,6 +787,12 @@ final class ActivityService
             || (int) $credit->getValue('rac_activity_id') !== (int) $activity->getValue('rqa_id')
             || !$activity->isEditable()) {
             throw new Exception('SYS_NO_RIGHTS');
+        }
+        // A credit a reviewer has decided on, or is looking at, is the reviewer's record as well.
+        if (!Component::isAdministrable(RequirementsPlugin::ID)
+            && in_array((string) $credit->getValue('rac_review_status'), array_merge(ReviewService::DECIDED_STATUSES, array(ReviewService::CREDIT_OPEN)), true)
+            && ReviewService::isEnabled()) {
+            throw new Exception('PLG_REQUIREMENTS_REVIEW_CREDIT_UNDER_REVIEW');
         }
 
         $this->db->startTransaction();

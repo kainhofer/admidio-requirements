@@ -515,12 +515,38 @@ final class FulfilmentService
                 'pending' => round((float) $pending, 2),
                 'required' => $required,
                 'percent' => $required === null ? null : (int) round(min(100.0, ($running / $target) * 100.0)),
+                'pendingPercent' => self::pendingPercent($running, (float) $pending, $target),
                 'status' => $status,
                 'warnings' => $warnings
             );
         }
 
         return $periods;
+    }
+
+    /**
+     * The coverage of one calendar period of one requirement for one member - for the member
+     * themselves, an administrator, or a reviewer.
+     *
+     * @return array<string,mixed> as periodCoverage(), plus `hasObligation`
+     * @throws Exception
+     */
+    public function memberPeriodCoverage(RequirementType $type, int $userId, DateTimeImmutable $reference): array
+    {
+        global $gCurrentUser;
+
+        if (!RequirementsPlugin::isUsableByCurrentUser()
+            || ($userId !== (int) $gCurrentUser->getValue('usr_id')
+                && !Component::isAdministrable(RequirementsPlugin::ID)
+                && !(new ReviewService($this->db))->isAnyReviewer())) {
+            throw new Exception('SYS_NO_RIGHTS');
+        }
+
+        [$periodStart, $periodEnd] = self::periodFor($type, $reference);
+        [$rules, $memberships] = $this->obligationInputs($type, $userId, $periodStart, $periodEnd);
+        [, , $hasRule] = $this->calculateRequired($type, $rules, $memberships, $periodStart, $periodEnd);
+
+        return $this->periodCoverage($type, $userId, $reference) + array('hasObligation' => $hasRule);
     }
 
     /**
@@ -557,9 +583,23 @@ final class FulfilmentService
             'pending' => round($pending, 2),
             'required' => $required > 0.0 ? round($required, 2) : null,
             'percent' => $required > 0.0 ? (int) round(min(100.0, ($attained / $required) * 100.0)) : null,
+            'pendingPercent' => self::pendingPercent($attained, $pending, $required),
             'status' => self::coverageStatus($required, $attained, $hasRule),
             'warnings' => $warnings
         );
+    }
+
+    /**
+     * How much of the bar the pending credits would fill on top of the attained ones - drafts and,
+     * in an approval mode, the credits still waiting for a decision.
+     */
+    public static function pendingPercent(float $attained, float $pending, float $required): int
+    {
+        if ($required <= 0.0 || $pending <= 0.0) {
+            return 0;
+        }
+        $attainedPercent = min(100.0, $attained / $required * 100.0);
+        return (int) round(min(100.0 - $attainedPercent, $pending / $required * 100.0));
     }
 
     /**
@@ -588,7 +628,8 @@ final class FulfilmentService
         string $statusFilter = ''
     ): array {
         if (!RequirementsPlugin::isUsableByCurrentUser()
-            || !Component::isAdministrable(RequirementsPlugin::ID)) {
+            || (!Component::isAdministrable(RequirementsPlugin::ID)
+                && !(new ReviewService($this->db))->isAnyReviewer())) {
             throw new Exception('SYS_NO_RIGHTS');
         }
 
@@ -1552,7 +1593,8 @@ final class FulfilmentService
         $statement = $this->db->queryPrepared(
             'SELECT rqa.rqa_id, rqa.rqa_user_id, rqa.rqa_uuid, rqa.rqa_title, rqa.rqa_begin_date, rqa.rqa_status,
                     rac.rac_id, rac.rac_uuid, rac.rac_period_reference,
-                    rac.rac_credits_claimed, rac.rac_credits_accepted
+                    rac.rac_credits_claimed, rac.rac_credits_accepted,
+                    rac.rac_review_status, rac.rac_review_comment, rac.rac_review_changed
                FROM ' . RequirementsTables::activityCredits() . ' AS rac
          INNER JOIN ' . RequirementsTables::activities() . ' AS rqa
                  ON rqa.rqa_id = rac.rac_activity_id
@@ -1564,6 +1606,10 @@ final class FulfilmentService
               ORDER BY rqa.rqa_user_id, rac.rac_period_reference, rqa.rqa_begin_date, rqa.rqa_title',
             $params
         );
+
+        // In an approval mode a credit counts once a reviewer decided on it; until then it is pending,
+        // like a draft. In every other mode it counts as claimed until a reviewer changes it.
+        $mode = (new ReviewService($this->db))->effectiveMode($requirementTypeId);
 
         $credits = array();
         while ($row = $statement->fetch()) {
@@ -1578,7 +1624,11 @@ final class FulfilmentService
                 'date' => (string)$row['rqa_begin_date'],
                 'periodReference' => (string)$row['rac_period_reference'],
                 'status' => (string)$row['rqa_status'],
-                'counts' => !in_array((string)$row['rqa_status'], self::NON_COUNTING_STATUSES, true),
+                'counts' => !in_array((string)$row['rqa_status'], self::NON_COUNTING_STATUSES, true)
+                    && ReviewService::creditCounts($mode, $row['rac_credits_accepted']),
+                'reviewStatus' => $row['rac_review_status'] === null ? '' : (string)$row['rac_review_status'],
+                'reviewComment' => (string)($row['rac_review_comment'] ?? ''),
+                'reviewChanged' => (string)($row['rac_review_changed'] ?? ''),
                 'claimedCredits' => (float)$row['rac_credits_claimed'],
                 'acceptedCredits' => $row['rac_credits_accepted'] === null ? null : (float)$row['rac_credits_accepted'],
                 'effectiveCredits' => $effective

@@ -8,6 +8,7 @@ use Admidio\Infrastructure\Entity\Entity;
 use Admidio\Users\Entity\User;
 use AdmidioPlugin\Requirements\Database\RequirementsTables;
 use AdmidioPlugin\Requirements\RequirementsPlugin;
+use AdmidioPlugin\Requirements\Service\ReviewService;
 
 final class Activity extends Entity
 {
@@ -66,7 +67,26 @@ final class Activity extends Entity
         return parent::delete();
     }
 
+    /**
+     * Its member and the administrators see an activity, and so does a reviewer who reviews one of
+     * its credits - read-only, through the review page.
+     */
     public function isVisible(): bool
+    {
+        global $gCurrentOrgId, $gCurrentUser, $gValidLogin;
+
+        if (!$gValidLogin || (int)$this->getValue('rqa_org_id') !== (int)$gCurrentOrgId) {
+            return false;
+        }
+
+        return $this->isOwnedOrAdministered() || (new ReviewService($this->db))->mayViewActivity($this);
+    }
+
+    /**
+     * Whether the activity belongs to the current user, or the current user administers the plugin:
+     * the two who see the whole activity and its edit form, rather than what a review covers of it.
+     */
+    public function isOwnedOrAdministered(): bool
     {
         global $gCurrentOrgId, $gCurrentUser, $gValidLogin;
 
@@ -82,7 +102,7 @@ final class Activity extends Entity
     {
         global $gCurrentUser;
 
-        if (!$this->isVisible()) {
+        if (!$this->isOwnedOrAdministered()) {
             return false;
         }
         if (Component::isAdministrable(RequirementsPlugin::ID)) {
@@ -92,13 +112,54 @@ final class Activity extends Entity
             return false;
         }
 
+        return $this->isEditableByPolicy() && !$this->isLockedByReview();
+    }
+
+    /**
+     * Whether the edit policy alone lets the member change the activity: always, or while it is a
+     * draft.
+     */
+    private function isEditableByPolicy(): bool
+    {
         return RequirementsPlugin::setting(RequirementsPlugin::SETTING_ACTIVITY_OWNER_EDIT_POLICY)
             !== RequirementsPlugin::EDIT_POLICY_UNTIL_SUBMITTED
             || (string)$this->getValue('rqa_status') === 'draft';
     }
 
+    /**
+     * Whether the review of a credit keeps the member from changing the activity, as the settings
+     * for editing during a review and after a decision say.
+     */
+    public function isLockedByReview(): bool
+    {
+        return (new ReviewService($this->db))->isLockedForOwner((int) $this->getValue('rqa_id'));
+    }
+
+    /**
+     * A member may delete their activity while they may edit it, unless a reviewer is looking at one
+     * of its credits or has decided on it: the record under review does not simply vanish.
+     */
     public function isDeletable(): bool
     {
-        return $this->isEditable();
+        if (!$this->isEditable()) {
+            return false;
+        }
+        return Component::isAdministrable(RequirementsPlugin::ID)
+            || !(new ReviewService($this->db))->isUnderReview((int) $this->getValue('rqa_id'));
+    }
+
+    /**
+     * Certificates may be added whenever the activity may be edited, and by its member also while a
+     * review locks it: evidence is always welcome, and adding it changes no claim.
+     */
+    public function mayAddFiles(): bool
+    {
+        global $gCurrentUser;
+
+        return $this->isEditable()
+            || ((int)$this->getValue('rqa_id') > 0
+                && $this->isOwnedOrAdministered()
+                && (int)$this->getValue('rqa_user_id') === (int)$gCurrentUser->getValue('usr_id')
+                && $this->isLockedByReview());
     }
 }

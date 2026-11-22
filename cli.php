@@ -260,9 +260,6 @@ $activityOptions = array(
     $opt('attendance', 'Attendance hours.', 'N'),
     $opt('comments', 'Member comments.', 'TEXT'),
     $opt('status', 'Activity status.', 'STATUS', false, false, false, array('draft', 'submitted', 'withdrawn')),
-    $opt('review-status', 'Review status.', 'STATUS', false, false, false,
-        array('open', 'accepted', 'partially_accepted', 'not_accepted', 'clarification')),
-    $opt('review-comments', 'Review comments.', 'TEXT'),
     $format
 );
 CliTaskRegistry::register(
@@ -318,14 +315,20 @@ CliTaskRegistry::register(
     RequirementsPlugin::ID,
     array(RequirementsCli::class, 'creditSet'),
     'Create or update one credited-period contribution for an activity.',
-    'requirements:credit-set ACTIVITY REQUIREMENT PERIOD CLAIMED [--accepted=N] [--dry-run]',
+    'requirements:credit-set ACTIVITY REQUIREMENT PERIOD CLAIMED [--accepted=N] [--review-status=STATUS] [--review-comment=TEXT] [--dry-run]',
     array(
         $arg('activity', 'Activity UUID or id.'),
         $arg('requirement', 'Requirement UUID, id or short name.'),
         $arg('period', 'Credited period or fulfilment date.'),
         $arg('claimed', 'Claimed credits.')
     ),
-    array($opt('accepted', 'Accepted credits; zero explicitly rejects the claim.', 'N'), $format),
+    array(
+        $opt('accepted', 'Accepted credits, a reviewer\'s decision; zero explicitly rejects the claim.', 'N'),
+        $opt('review-status', 'Review status of the credit, a reviewer\'s decision; derived from --accepted when omitted.', 'STATUS', false, false, false,
+            array('open', 'accepted', 'partially_accepted', 'not_accepted', 'clarification')),
+        $opt('review-comment', 'The reviewer\'s comment to the member.', 'TEXT'),
+        $format
+    ),
     array(),
     CliTaskRegistry::ACCESS_ADMINISTRABLE,
     true

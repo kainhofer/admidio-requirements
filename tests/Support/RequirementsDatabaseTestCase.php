@@ -14,6 +14,7 @@ use AdmidioPlugin\Requirements\Entity\RequirementRoleRule;
 use AdmidioPlugin\Requirements\Entity\RequirementType;
 use AdmidioPlugin\Requirements\RequirementsPlugin;
 use AdmidioPlugin\Requirements\Service\ActivityService;
+use AdmidioPlugin\Requirements\Service\ReviewService;
 use AdmidioPlugin\Requirements\Service\RequirementTypeService;
 
 /**
@@ -54,10 +55,11 @@ abstract class RequirementsDatabaseTestCase extends AdministratorTestCase
         // The registry reads the component table for this; supplying it keeps the test to the
         // services and off the installer. null puts it back to reading the database.
         PluginRegistry::setInstallations(array(
-            RequirementsPlugin::ID => array('comId' => 1, 'version' => '0.5.0')
+            RequirementsPlugin::ID => array('comId' => 1, 'version' => '0.6.0')
         ));
 
         $this->enablePluginForCurrentOrganization();
+        ReviewService::resetCaches();
     }
 
     protected function tearDown(): void
@@ -81,12 +83,39 @@ abstract class RequirementsDatabaseTestCase extends AdministratorTestCase
             RequirementsPlugin::SETTING_ACCESS => '2',
             RequirementsPlugin::SETTING_ACTIVITY_OWNER_EDIT_POLICY => RequirementsPlugin::EDIT_POLICY_ALWAYS,
             RequirementsPlugin::SETTING_PRORATION_BASIS_DEFAULT => 'month',
-            RequirementsPlugin::SETTING_OVERVIEW_PREVIOUS_YEARS => '4'
+            RequirementsPlugin::SETTING_OVERVIEW_PREVIOUS_YEARS => '4',
+            // The settings manager keeps its values in memory beyond the rolled-back transaction of a
+            // test, so the review settings are put back here rather than left to a previous test.
+            RequirementsPlugin::SETTING_REVIEW_ENABLED => '0',
+            RequirementsPlugin::SETTING_REVIEW_ROLES => '',
+            RequirementsPlugin::SETTING_REVIEW_USERS => '',
+            RequirementsPlugin::SETTING_REVIEW_REVIEWER_CHOICE => 'configured',
+            RequirementsPlugin::SETTING_REVIEW_EDIT_DURING => 'locked',
+            RequirementsPlugin::SETTING_REVIEW_EDIT_AFTER => 'allowed',
+            RequirementsPlugin::SETTING_REVIEW_NOTIFICATIONS => '0'
         );
 
         foreach (array_merge($defaults, $settings) as $name => $value) {
             $gSettingsManager->set($name, $value, true);
         }
+    }
+
+    /**
+     * Switch reviews on, with these reviewers and settings.
+     *
+     * @param array<int,int> $reviewerUserIds
+     * @param array<int,int> $reviewerRoleIds
+     * @param array<string,string> $settings further review settings
+     */
+    protected function enableReviews(array $reviewerUserIds = array(), array $reviewerRoleIds = array(), array $settings = array()): void
+    {
+        $this->enablePluginForCurrentOrganization(array_merge(array(
+            RequirementsPlugin::SETTING_REVIEW_ENABLED => '1',
+            RequirementsPlugin::SETTING_REVIEW_USERS => implode(',', $reviewerUserIds),
+            RequirementsPlugin::SETTING_REVIEW_ROLES => implode(',', $reviewerRoleIds),
+            RequirementsPlugin::SETTING_REVIEW_NOTIFICATIONS => '0'
+        ), $settings));
+        ReviewService::resetCaches();
     }
 
     /**
@@ -105,7 +134,8 @@ abstract class RequirementsDatabaseTestCase extends AdministratorTestCase
             RequirementsTables::requirementTypes(),
             RequirementsTables::requirementRoleRules(),
             RequirementsTables::activityCredits(),
-            RequirementsTables::activityFiles()
+            RequirementsTables::activityFiles(),
+            RequirementsTables::reviews()
         );
 
         $missing = false;
@@ -215,6 +245,7 @@ abstract class RequirementsDatabaseTestCase extends AdministratorTestCase
             $callback();
         } finally {
             foreach (array(
+                RequirementsTables::reviews(),
                 RequirementsTables::activityCredits(),
                 RequirementsTables::requirementRoleRules(),
                 RequirementsTables::activities(),
@@ -292,16 +323,32 @@ abstract class RequirementsDatabaseTestCase extends AdministratorTestCase
             'rqa_begin_date' => $beginDate
         ), $userId);
 
-        $service->saveCredit(
+        $credit = $service->saveCredit(
             new ActivityCredit($this->getDatabase()),
             $activity,
             $type,
             $periodReference ?? $beginDate,
-            $claimed,
-            $accepted
+            $claimed
         );
+        if ($accepted !== null) {
+            $this->setAccepted($credit, $accepted);
+        }
 
         return $activity;
+    }
+
+    /**
+     * Give a credit a reviewer's decision, as fixture data: the accepted amount, and the status it
+     * stands for. Writing it through the review would need a review and a reviewer around it.
+     */
+    protected function setAccepted(ActivityCredit $credit, ?float $accepted, ?string $status = null): void
+    {
+        $credit->setValue('rac_credits_accepted', $accepted === null ? null : number_format($accepted, 2, '.', ''));
+        $credit->setValue('rac_review_status', $accepted === null ? $status : ($status ?? ReviewService::statusForAmount(
+            (float) $credit->getValue('rac_credits_claimed', 'database'),
+            $accepted
+        )));
+        $credit->save();
     }
 
     /**

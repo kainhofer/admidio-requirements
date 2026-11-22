@@ -65,8 +65,6 @@ CREATE TABLE %PREFIX%_req_activities
     rqa_attendance          decimal(10,2)    NULL DEFAULT 0.00,
     rqa_comments            text             NULL,
     rqa_status              varchar(32)      NOT NULL DEFAULT 'draft',
-    rqa_review_comments     text             NULL,
-    rqa_review_status       varchar(32)      NULL,
     rqa_source_key          varchar(190)     NULL,
     rqa_usr_id_create       integer unsigned,
     rqa_timestamp_create    timestamp        NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -82,7 +80,6 @@ CREATE UNIQUE INDEX %PREFIX%_idx_rqa_uuid ON %PREFIX%_req_activities (rqa_uuid);
 CREATE INDEX %PREFIX%_idx_rqa_org_user_date ON %PREFIX%_req_activities (rqa_org_id, rqa_user_id, rqa_begin_date);
 CREATE INDEX %PREFIX%_idx_rqa_provider ON %PREFIX%_req_activities (rqa_provider_id);
 CREATE INDEX %PREFIX%_idx_rqa_status ON %PREFIX%_req_activities (rqa_org_id, rqa_status);
-CREATE INDEX %PREFIX%_idx_rqa_review_status ON %PREFIX%_req_activities (rqa_org_id, rqa_review_status);
 /* Not unique on purpose. The import's "create" duplicate policy allows a second row with the
    same source key, so the index speeds the lookup up rather than deciding the answer. */
 CREATE INDEX %PREFIX%_idx_rqa_source_key ON %PREFIX%_req_activities (rqa_org_id, rqa_source_key);
@@ -103,6 +100,8 @@ CREATE TABLE %PREFIX%_req_requirement_types
     rqt_multiple_roles_mode varchar(16)      NOT NULL DEFAULT 'maximum',
     rqt_active              boolean          NOT NULL DEFAULT true,
     rqt_sequence            integer unsigned NOT NULL DEFAULT 0,
+    rqt_review_mode         varchar(32)      NOT NULL DEFAULT 'none',
+    rqt_review_due_days     integer unsigned NOT NULL DEFAULT 0,
     rqt_usr_id_create       integer unsigned,
     rqt_timestamp_create    timestamp        NOT NULL DEFAULT CURRENT_TIMESTAMP,
     rqt_usr_id_change       integer unsigned,
@@ -162,6 +161,9 @@ CREATE TABLE %PREFIX%_req_activity_credits
     rac_period_reference    date             NOT NULL,
     rac_credits_claimed     decimal(10,2)    NOT NULL,
     rac_credits_accepted    decimal(10,2)    NULL,
+    rac_review_status       varchar(32)      NULL,
+    rac_review_comment      text             NULL,
+    rac_review_changed      timestamp        NULL DEFAULT NULL,
     rac_usr_id_create       integer unsigned,
     rac_timestamp_create    timestamp        NOT NULL DEFAULT CURRENT_TIMESTAMP,
     rac_usr_id_change       integer unsigned,
@@ -176,6 +178,7 @@ CREATE UNIQUE INDEX %PREFIX%_idx_rac_uuid ON %PREFIX%_req_activity_credits (rac_
 /* One contribution per activity, requirement and period - the rule the credits editor relies on. */
 CREATE UNIQUE INDEX %PREFIX%_idx_rac_act_req_period ON %PREFIX%_req_activity_credits (rac_activity_id, rac_requirement_type_id, rac_period_reference);
 CREATE INDEX %PREFIX%_idx_rac_requirement_period ON %PREFIX%_req_activity_credits (rac_requirement_type_id, rac_period_reference);
+CREATE INDEX %PREFIX%_idx_rac_review_status ON %PREFIX%_req_activity_credits (rac_review_status);
 
 CREATE TABLE %PREFIX%_req_activity_files
 (
@@ -195,6 +198,45 @@ COLLATE = utf8mb4_unicode_ci;
 
 CREATE UNIQUE INDEX %PREFIX%_idx_raf_uuid ON %PREFIX%_req_activity_files (raf_uuid);
 CREATE INDEX %PREFIX%_idx_raf_activity ON %PREFIX%_req_activity_files (raf_activity_id);
+
+/* A review: one member, one requirement and one credited period, or one single activity. A member
+   submits it, or a reviewer requests it and the member shares the activities. The decision itself is
+   stored on each credit (rac_review_status, rac_credits_accepted, rac_review_comment). */
+CREATE TABLE %PREFIX%_req_reviews
+(
+    rrv_id                  integer unsigned NOT NULL AUTO_INCREMENT,
+    rrv_uuid                varchar(36)      NOT NULL,
+    rrv_org_id              integer unsigned NOT NULL,
+    rrv_user_id             integer unsigned NOT NULL,
+    rrv_requirement_type_id integer unsigned NULL,
+    rrv_period_reference    date             NULL,
+    rrv_period_to           date             NULL,
+    rrv_activity_id         integer unsigned NULL,
+    rrv_kind                varchar(16)      NOT NULL DEFAULT 'submission',
+    rrv_reviewer_user_id    integer unsigned NULL,
+    rrv_reviewer_role_id    integer unsigned NULL,
+    rrv_status              varchar(16)      NOT NULL DEFAULT 'open',
+    rrv_due_date            date             NULL,
+    rrv_message             text             NULL,
+    rrv_result_comment      text             NULL,
+    rrv_requested_by        integer unsigned NULL,
+    rrv_shared_at           timestamp        NULL DEFAULT NULL,
+    rrv_finished_by         integer unsigned NULL,
+    rrv_finished_at         timestamp        NULL DEFAULT NULL,
+    rrv_usr_id_create       integer unsigned,
+    rrv_timestamp_create    timestamp        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    rrv_usr_id_change       integer unsigned,
+    rrv_timestamp_change    timestamp        NULL DEFAULT NULL,
+    PRIMARY KEY (rrv_id)
+)
+ENGINE = InnoDB
+DEFAULT CHARSET = utf8mb4
+COLLATE = utf8mb4_unicode_ci;
+
+CREATE UNIQUE INDEX %PREFIX%_idx_rrv_uuid ON %PREFIX%_req_reviews (rrv_uuid);
+CREATE INDEX %PREFIX%_idx_rrv_org_status ON %PREFIX%_req_reviews (rrv_org_id, rrv_status);
+CREATE INDEX %PREFIX%_idx_rrv_user ON %PREFIX%_req_reviews (rrv_user_id, rrv_requirement_type_id, rrv_period_reference);
+CREATE INDEX %PREFIX%_idx_rrv_activity ON %PREFIX%_req_reviews (rrv_activity_id);
 
 ALTER TABLE %PREFIX%_req_providers
     ADD CONSTRAINT %PREFIX%_fk_rqp_org FOREIGN KEY (rqp_org_id) REFERENCES %PREFIX%_organizations (org_id) ON DELETE RESTRICT ON UPDATE RESTRICT,
@@ -231,3 +273,15 @@ ALTER TABLE %PREFIX%_req_activity_credits
 ALTER TABLE %PREFIX%_req_activity_files
     ADD CONSTRAINT %PREFIX%_fk_raf_activity FOREIGN KEY (raf_activity_id) REFERENCES %PREFIX%_req_activities (rqa_id) ON DELETE CASCADE ON UPDATE RESTRICT,
     ADD CONSTRAINT %PREFIX%_fk_raf_usr_create FOREIGN KEY (raf_usr_id_create) REFERENCES %PREFIX%_users (usr_id) ON DELETE SET NULL ON UPDATE RESTRICT;
+
+ALTER TABLE %PREFIX%_req_reviews
+    ADD CONSTRAINT %PREFIX%_fk_rrv_org FOREIGN KEY (rrv_org_id) REFERENCES %PREFIX%_organizations (org_id) ON DELETE RESTRICT ON UPDATE RESTRICT,
+    ADD CONSTRAINT %PREFIX%_fk_rrv_user FOREIGN KEY (rrv_user_id) REFERENCES %PREFIX%_users (usr_id) ON DELETE CASCADE ON UPDATE RESTRICT,
+    ADD CONSTRAINT %PREFIX%_fk_rrv_requirement FOREIGN KEY (rrv_requirement_type_id) REFERENCES %PREFIX%_req_requirement_types (rqt_id) ON DELETE CASCADE ON UPDATE RESTRICT,
+    ADD CONSTRAINT %PREFIX%_fk_rrv_activity FOREIGN KEY (rrv_activity_id) REFERENCES %PREFIX%_req_activities (rqa_id) ON DELETE CASCADE ON UPDATE RESTRICT,
+    ADD CONSTRAINT %PREFIX%_fk_rrv_reviewer_user FOREIGN KEY (rrv_reviewer_user_id) REFERENCES %PREFIX%_users (usr_id) ON DELETE SET NULL ON UPDATE RESTRICT,
+    ADD CONSTRAINT %PREFIX%_fk_rrv_reviewer_role FOREIGN KEY (rrv_reviewer_role_id) REFERENCES %PREFIX%_roles (rol_id) ON DELETE SET NULL ON UPDATE RESTRICT,
+    ADD CONSTRAINT %PREFIX%_fk_rrv_requested_by FOREIGN KEY (rrv_requested_by) REFERENCES %PREFIX%_users (usr_id) ON DELETE SET NULL ON UPDATE RESTRICT,
+    ADD CONSTRAINT %PREFIX%_fk_rrv_finished_by FOREIGN KEY (rrv_finished_by) REFERENCES %PREFIX%_users (usr_id) ON DELETE SET NULL ON UPDATE RESTRICT,
+    ADD CONSTRAINT %PREFIX%_fk_rrv_usr_create FOREIGN KEY (rrv_usr_id_create) REFERENCES %PREFIX%_users (usr_id) ON DELETE SET NULL ON UPDATE RESTRICT,
+    ADD CONSTRAINT %PREFIX%_fk_rrv_usr_change FOREIGN KEY (rrv_usr_id_change) REFERENCES %PREFIX%_users (usr_id) ON DELETE SET NULL ON UPDATE RESTRICT;

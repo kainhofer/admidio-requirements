@@ -14,6 +14,8 @@
 
 use Admidio\Changelog\Service\ChangelogService;
 use Admidio\Components\Entity\Component;
+use Admidio\Hooks\Hooks;
+use Admidio\Infrastructure\Plugins\PluginPanel;
 use Admidio\Infrastructure\Plugins\PluginRegistry;
 use Admidio\Infrastructure\Utils\SecurityUtils;
 use AdmidioPlugin\Requirements\Entity\Activity;
@@ -22,6 +24,8 @@ use AdmidioPlugin\Requirements\Entity\ActivityFile;
 use AdmidioPlugin\Requirements\Entity\Provider;
 use AdmidioPlugin\Requirements\Entity\RequirementRoleRule;
 use AdmidioPlugin\Requirements\Entity\RequirementType;
+use AdmidioPlugin\Requirements\Entity\Review;
+use AdmidioPlugin\Requirements\Presenter\RequirementsPreferencesPresenter;
 use AdmidioPlugin\Requirements\RequirementsPlugin;
 
 if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
@@ -34,7 +38,8 @@ ChangelogService::registerCallback('getTableLabelArray', '', array(
     'req_requirement_types' => 'PLG_REQUIREMENTS_REQUIREMENT_TYPES',
     'req_requirement_role_rules' => 'PLG_REQUIREMENTS_ROLE_RULES',
     'req_activity_credits' => 'PLG_REQUIREMENTS_ACTIVITY_CREDITS',
-    'req_activity_files' => 'PLG_REQUIREMENTS_FILES'
+    'req_activity_files' => 'PLG_REQUIREMENTS_FILES',
+    'req_reviews' => 'PLG_REQUIREMENTS_REVIEWS'
 ));
 
 ChangelogService::registerCallback('getAreaArray', '', array(
@@ -48,7 +53,8 @@ ChangelogService::registerCallback('getAreaArray', '', array(
             'req_requirement_types',
             'req_requirement_role_rules',
             'req_activity_credits',
-            'req_activity_files'
+            'req_activity_files',
+            'req_reviews'
         )
     )
 ));
@@ -91,14 +97,6 @@ ChangelogService::registerCallback('getFieldTranslations', '', array(
         'submitted' => 'PLG_REQUIREMENTS_STATUS_SUBMITTED',
         'withdrawn' => 'PLG_REQUIREMENTS_STATUS_WITHDRAWN'
     ))),
-    'rqa_review_status' => array('name' => 'PLG_REQUIREMENTS_REVIEW_STATUS', 'type' => 'CUSTOM_LIST', 'entries' => $requirementsList(array(
-        'open' => 'PLG_REQUIREMENTS_REVIEW_OPEN',
-        'accepted' => 'PLG_REQUIREMENTS_REVIEW_ACCEPTED',
-        'partially_accepted' => 'PLG_REQUIREMENTS_REVIEW_PARTIALLY_ACCEPTED',
-        'not_accepted' => 'PLG_REQUIREMENTS_REVIEW_NOT_ACCEPTED',
-        'clarification' => 'PLG_REQUIREMENTS_REVIEW_CLARIFICATION'
-    ))),
-    'rqa_review_comments' => 'PLG_REQUIREMENTS_REVIEW_COMMENTS',
     // Requirement types
     'rqt_name' => 'SYS_NAME',
     'rqt_short_name' => 'PLG_REQUIREMENTS_SHORT_NAME',
@@ -122,6 +120,15 @@ ChangelogService::registerCallback('getFieldTranslations', '', array(
     ))),
     'rqt_active' => array('name' => 'PLG_REQUIREMENTS_ACTIVE', 'type' => 'BOOL'),
     'rqt_sequence' => 'SYS_ORDER',
+    'rqt_review_mode' => array('name' => 'PLG_REQUIREMENTS_REVIEW_MODE', 'type' => 'CUSTOM_LIST', 'entries' => $requirementsList(array(
+        'none' => 'PLG_REQUIREMENTS_REVIEW_MODE_NONE',
+        'optional' => 'PLG_REQUIREMENTS_REVIEW_MODE_OPTIONAL',
+        'approval_on_submission' => 'PLG_REQUIREMENTS_REVIEW_MODE_APPROVAL_ON_SUBMISSION',
+        'approval_queue' => 'PLG_REQUIREMENTS_REVIEW_MODE_APPROVAL_QUEUE',
+        'period' => 'PLG_REQUIREMENTS_REVIEW_MODE_PERIOD',
+        'audit' => 'PLG_REQUIREMENTS_REVIEW_MODE_AUDIT'
+    ))),
+    'rqt_review_due_days' => 'PLG_REQUIREMENTS_REVIEW_DUE_DAYS',
     // Role rules
     'rrr_required_credits' => array('name' => 'PLG_REQUIREMENTS_REQUIRED_CREDITS', 'type' => 'REQUIREMENTS_CREDITS'),
     'rrr_partial_period_mode' => array('name' => 'PLG_REQUIREMENTS_PARTIAL_PERIOD_MODE', 'type' => 'CUSTOM_LIST', 'entries' => $requirementsList(array(
@@ -140,6 +147,36 @@ ChangelogService::registerCallback('getFieldTranslations', '', array(
     'rac_period_reference' => array('name' => 'PLG_REQUIREMENTS_CREDITED_PERIOD', 'type' => 'DATE'),
     'rac_credits_claimed' => array('name' => 'PLG_REQUIREMENTS_CREDITS_CLAIMED', 'type' => 'REQUIREMENTS_CREDITS'),
     'rac_credits_accepted' => array('name' => 'PLG_REQUIREMENTS_CREDITS_ACCEPTED', 'type' => 'REQUIREMENTS_CREDITS'),
+    'rac_review_status' => array('name' => 'PLG_REQUIREMENTS_REVIEW_STATUS', 'type' => 'CUSTOM_LIST', 'entries' => $requirementsList(array(
+        'open' => 'PLG_REQUIREMENTS_REVIEW_OPEN',
+        'accepted' => 'PLG_REQUIREMENTS_REVIEW_ACCEPTED',
+        'partially_accepted' => 'PLG_REQUIREMENTS_REVIEW_PARTIALLY_ACCEPTED',
+        'not_accepted' => 'PLG_REQUIREMENTS_REVIEW_NOT_ACCEPTED',
+        'clarification' => 'PLG_REQUIREMENTS_REVIEW_CLARIFICATION'
+    ))),
+    'rac_review_comment' => 'PLG_REQUIREMENTS_REVIEW_COMMENTS',
+    'rac_review_changed' => array('name' => 'PLG_REQUIREMENTS_REVIEW_CHANGED_AFTER', 'type' => 'DATETIME'),
+    // Reviews
+    'rrv_requirement_type_id' => array('name' => 'PLG_REQUIREMENTS_REQUIREMENT_TYPE', 'type' => 'REQUIREMENTS_TYPE'),
+    'rrv_period_reference' => array('name' => 'PLG_REQUIREMENTS_CREDITED_PERIOD', 'type' => 'DATE'),
+    'rrv_period_to' => array('name' => 'PLG_REQUIREMENTS_PERIOD_END', 'type' => 'DATE'),
+    'rrv_activity_id' => 'PLG_REQUIREMENTS_ACTIVITY',
+    'rrv_kind' => array('name' => 'PLG_REQUIREMENTS_REVIEW_KIND', 'type' => 'CUSTOM_LIST', 'entries' => $requirementsList(array(
+        'submission' => 'PLG_REQUIREMENTS_REVIEW_KIND_SUBMISSION',
+        'request' => 'PLG_REQUIREMENTS_REVIEW_KIND_REQUEST'
+    ))),
+    'rrv_reviewer_user_id' => array('name' => 'PLG_REQUIREMENTS_REVIEWER', 'type' => 'USER'),
+    'rrv_reviewer_role_id' => array('name' => 'PLG_REQUIREMENTS_REVIEWER_ROLE', 'type' => 'ROLE'),
+    'rrv_status' => array('name' => 'PLG_REQUIREMENTS_STATUS', 'type' => 'CUSTOM_LIST', 'entries' => $requirementsList(array(
+        'requested' => 'PLG_REQUIREMENTS_REVIEW_STATE_REQUESTED',
+        'open' => 'PLG_REQUIREMENTS_REVIEW_STATE_OPEN',
+        'clarification' => 'PLG_REQUIREMENTS_REVIEW_STATE_CLARIFICATION',
+        'finished' => 'PLG_REQUIREMENTS_REVIEW_STATE_FINISHED',
+        'withdrawn' => 'PLG_REQUIREMENTS_REVIEW_STATE_WITHDRAWN'
+    ))),
+    'rrv_due_date' => array('name' => 'PLG_REQUIREMENTS_REVIEW_DUE_DATE', 'type' => 'DATE'),
+    'rrv_message' => 'SYS_MESSAGE',
+    'rrv_result_comment' => 'PLG_REQUIREMENTS_REVIEW_RESULT_COMMENT',
     // Certificates
     'raf_name' => 'SYS_NAME',
     'raf_mime_type' => 'SYS_FILE_TYPE',
@@ -189,7 +226,8 @@ foreach (array(
     'req_activities' => 'users',
     'req_activity_credits' => 'req_requirement_types',
     'req_requirement_role_rules' => 'roles',
-    'req_activity_files' => 'req_activities'
+    'req_activity_files' => 'req_activities',
+    'req_reviews' => 'users'
 ) as $requirementsTable => $requirementsRelated) {
     ChangelogService::registerCallback(
         'getRelatedTable',
@@ -239,6 +277,14 @@ ChangelogService::registerCallback(
     static function (): RequirementRoleRule {
         global $gDb;
         return new RequirementRoleRule($gDb);
+    }
+);
+ChangelogService::registerCallback(
+    'getObjectForTable',
+    'req_reviews',
+    static function (): Review {
+        global $gDb;
+        return new Review($gDb);
     }
 );
 ChangelogService::registerCallback(
@@ -301,6 +347,15 @@ ChangelogService::registerCallback(
         );
     }
 );
+// A review is worked on in the review page and followed on the activity list of its member.
+ChangelogService::registerCallback(
+    'createLink',
+    'req_reviews',
+    static function (string $text, string $module, int|string $id, string $uuid = ''): string {
+        $plugin = PluginRegistry::get(RequirementsPlugin::ID);
+        return $plugin === null ? '' : SecurityUtils::encodeUrl($plugin->getUrl('index.php'), array('mode' => 'list'));
+    }
+);
 // A credit and a certificate are edited on their activity, and their entries carry the activity's UUID
 // as their own (see ActivityCredit::adjustLogEntry() and ActivityFile::adjustLogEntry()), so the link
 // needs no lookup - and works for a credit or certificate that has been deleted since.
@@ -340,7 +395,8 @@ ChangelogService::registerCallback('getPermittedTables', '', static function ($u
         'req_requirement_types',
         'req_requirement_role_rules',
         'req_activity_credits',
-        'req_activity_files'
+        'req_activity_files',
+        'req_reviews'
     );
 });
 
@@ -360,10 +416,35 @@ if (method_exists(ChangelogService::class, 'getOwnChangeTables')) {
             'req_requirement_types',
             'req_requirement_role_rules',
             'req_activity_credits',
-            'req_activity_files'
+            'req_activity_files',
+            'req_reviews'
         ) : array();
     });
 }
+
+// The preferences panel: the one Admidio would generate, with members as well as roles for the
+// reviewers.
+Hooks::addFilter(
+    PluginPanel::HOOK,
+    static function (array $panels): array {
+        global $gL10n;
+
+        $plugin = PluginRegistry::get(RequirementsPlugin::ID);
+        if ($plugin === null) {
+            return $panels;
+        }
+        $panels[] = array(
+            'id' => PluginPanel::normalizeId($plugin->id),
+            'title' => $gL10n->get($plugin->name),
+            'icon' => $plugin->icon,
+            'create' => array(RequirementsPreferencesPresenter::class, 'createForm')
+        );
+        return $panels;
+    },
+    PluginPanel::DEFAULT_SEQUENCE,
+    1,
+    RequirementsPlugin::ID
+);
 
 // The fulfilment overview of the activity list, on the overview page as well.
 RequirementsPlugin::registerWidget();

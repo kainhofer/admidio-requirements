@@ -9,7 +9,7 @@
 <form {foreach $attributes as $attribute}{$attribute@key}="{$attribute}" {/foreach}>
     {if $readOnly}
         <div class="alert alert-info" role="alert">
-            <i class="bi bi-lock-fill"></i> {$l10n->get('PLG_REQUIREMENTS_ACTIVITY_VIEW_ONLY')}
+            <i class="bi bi-lock-fill"></i> {if $lockedByReview}{$l10n->get('PLG_REQUIREMENTS_REVIEW_LOCKED')}{else}{$l10n->get('PLG_REQUIREMENTS_ACTIVITY_VIEW_ONLY')}{/if}
         </div>
     {else}
         <div class="admidio-form-required-notice"><span>{$l10n->get('SYS_REQUIRED_INPUT')}</span></div>
@@ -50,7 +50,8 @@
                                 <th style="min-width: 10rem;">{$l10n->get('PLG_REQUIREMENTS_REQUIREMENT_TYPE')}</th>
                                 <th style="min-width: 9rem;">{$l10n->get('PLG_REQUIREMENTS_CREDITED_PERIOD')}</th>
                                 <th style="min-width: 7rem;">{$l10n->get('PLG_REQUIREMENTS_CREDITS_CLAIMED')}</th>
-                                {if $showReview}<th style="min-width: 7rem;">{$l10n->get('PLG_REQUIREMENTS_CREDITS_ACCEPTED')}</th>{/if}
+                                {if $showReview}<th style="min-width: 7rem;">{$l10n->get('PLG_REQUIREMENTS_CREDITS_ACCEPTED')}</th>
+                                    <th style="min-width: 10rem;">{$l10n->get('PLG_REQUIREMENTS_REVIEW')}</th>{/if}
                             </tr>
                         </thead>
                         <tbody>
@@ -96,11 +97,11 @@
                                                value="{$cf.claimedValue}" class="form-control form-control-sm"{if $readOnly} readonly disabled{/if}>
                                     </td>
                                     {if $showReview}
+                                        <td>{if $cf.acceptedValue neq ''}{$cf.acceptedValue}{else}&ndash;{/if}</td>
                                         <td>
-                                            {if $cf.acceptedId}
-                                                <input type="number" step="0.01" min="0" data-credit-step="0.5" name="{$cf.acceptedId}" id="{$cf.acceptedId}"
-                                                       value="{$cf.acceptedValue}" class="form-control form-control-sm"{if $readOnly} readonly disabled{/if}>
-                                            {/if}
+                                            {if $cf.reviewStatusText}<span class="badge {$cf.reviewStatusClass}">{$cf.reviewStatusText}</span>{/if}
+                                            {if $cf.reviewComment}<div class="small"><i class="bi bi-chat-left-text"></i> {$cf.reviewComment nofilter}</div>{/if}
+                                            {if $cf.reviewChanged}<div class="small text-body-secondary">{$cf.reviewChanged}</div>{/if}
                                         </td>
                                     {/if}
                                 </tr>
@@ -163,13 +164,11 @@
     {/if}
 
     <div class="card admidio-field-group">
-        <div class="card-header">{$l10n->get('SYS_COMMENT')}{if $showReview} &amp; {$l10n->get('PLG_REQUIREMENTS_REVIEW_STATUS')}{/if}</div>
+        <div class="card-header">{$l10n->get('SYS_COMMENT')}</div>
         <div class="card-body">
             {include 'sys-template-parts/form.multiline.tpl' data=$elements['rqa_comments']}
-            {if $showReview}
+            {if $showActivityStatus}
                 {include 'sys-template-parts/form.select.tpl' data=$elements['rqa_status']}
-                {include 'sys-template-parts/form.select.tpl' data=$elements['rqa_review_status']}
-                {include 'sys-template-parts/form.multiline.tpl' data=$elements['rqa_review_comments']}
             {/if}
         </div>
     </div>

@@ -14,6 +14,34 @@
     #adm_req_activities_table > tbody > tr.admidio-group-heading { --bs-table-bg: lightgray; }
 </style>
 
+{if $reviewAgenda|@count gt 0}
+    <div class="card admidio-field-group mb-3" id="adm_req_review_agenda">
+        <div class="card-header"><i class="bi bi-clipboard-check"></i> {$l10n->get('PLG_REQUIREMENTS_REVIEWS')}</div>
+        <ul class="list-group list-group-flush">
+            {foreach $reviewAgenda as $item}
+                <li class="list-group-item d-flex flex-wrap justify-content-between align-items-center gap-2" id="{$item.id}">
+                    <div>
+                        <span class="badge {$item.statusClass}">{$item.statusText}</span>
+                        {$item.label nofilter}
+                        {if $item.due}<span class="small {if $item.overdue}text-danger fw-bold{else}text-body-secondary{/if}">{$l10n->get('PLG_REQUIREMENTS_REVIEW_DUE_BY', [$item.due])}</span>{/if}
+                        {if $item.message}<div class="small text-body-secondary"><i class="bi bi-chat-left-text"></i> {$item.message nofilter}</div>{/if}
+                    </div>
+                    <div class="text-nowrap">
+                        {foreach $item.actions as $action}
+                            {if isset($action.dataHref)}
+                                <a class="btn btn-sm btn-outline-secondary admidio-messagebox" href="javascript:void(0);" data-buttons="yes-no"
+                                   data-message="{$action.confirm}" data-href="{$action.dataHref}"><i class="bi {$action.icon}"></i> {$action.label}</a>
+                            {else}
+                                <a class="btn btn-sm btn-primary" href="{$action.url}"><i class="bi {$action.icon}"></i> {$action.label}</a>
+                            {/if}
+                        {/foreach}
+                    </div>
+                </li>
+            {/foreach}
+        </ul>
+    </div>
+{/if}
+
 {if $overview|@count eq 0 and $overviewHint}
     <div class="card admidio-field-group mb-3">
         <div class="card-header">{$l10n->get('PLG_REQUIREMENTS_OVERVIEW_HEADLINE')}</div>

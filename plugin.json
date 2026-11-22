@@ -1,7 +1,7 @@
 {
     "name": "PLG_REQUIREMENTS_NAME",
     "description": "PLG_REQUIREMENTS_DESCRIPTION",
-    "version": "0.5.0-alpha.1",
+    "version": "0.6.0-a1",
     "author": "Reinhold Kainhofer",
     "url": "https://github.com/kainhofer/admidio-requirements/",
     "icon": "bi-clipboard-check",
@@ -86,6 +86,61 @@
             "step": 1,
             "label": "PLG_REQUIREMENTS_FILES_TOTAL_QUOTA",
             "description": "PLG_REQUIREMENTS_FILES_TOTAL_QUOTA_DESC"
+        },
+        "requirements_review_enabled": {
+            "type": "bool",
+            "default": 0,
+            "label": "PLG_REQUIREMENTS_REVIEW_ENABLED",
+            "description": "PLG_REQUIREMENTS_REVIEW_ENABLED_DESC"
+        },
+        "requirements_review_roles": {
+            "type": "roles",
+            "default": [],
+            "label": "PLG_REQUIREMENTS_REVIEWER_ROLES",
+            "description": "PLG_REQUIREMENTS_REVIEWER_ROLES_DESC"
+        },
+        "requirements_review_users": {
+            "type": "string",
+            "default": "",
+            "label": "PLG_REQUIREMENTS_REVIEWER_USERS",
+            "description": "PLG_REQUIREMENTS_REVIEWER_USERS_DESC"
+        },
+        "requirements_review_reviewer_choice": {
+            "type": "enum",
+            "default": "configured",
+            "values": {
+                "configured": "PLG_REQUIREMENTS_REVIEWER_CHOICE_CONFIGURED",
+                "pick_configured": "PLG_REQUIREMENTS_REVIEWER_CHOICE_PICK_CONFIGURED",
+                "any": "PLG_REQUIREMENTS_REVIEWER_CHOICE_ANY"
+            },
+            "label": "PLG_REQUIREMENTS_REVIEWER_CHOICE",
+            "description": "PLG_REQUIREMENTS_REVIEWER_CHOICE_DESC"
+        },
+        "requirements_review_edit_during": {
+            "type": "enum",
+            "default": "locked",
+            "values": {
+                "locked": "PLG_REQUIREMENTS_REVIEW_EDIT_LOCKED",
+                "allowed": "PLG_REQUIREMENTS_REVIEW_EDIT_ALLOWED"
+            },
+            "label": "PLG_REQUIREMENTS_REVIEW_EDIT_DURING",
+            "description": "PLG_REQUIREMENTS_REVIEW_EDIT_DURING_DESC"
+        },
+        "requirements_review_edit_after": {
+            "type": "enum",
+            "default": "allowed",
+            "values": {
+                "allowed": "PLG_REQUIREMENTS_REVIEW_EDIT_ALLOWED",
+                "locked": "PLG_REQUIREMENTS_REVIEW_EDIT_LOCKED"
+            },
+            "label": "PLG_REQUIREMENTS_REVIEW_EDIT_AFTER",
+            "description": "PLG_REQUIREMENTS_REVIEW_EDIT_AFTER_DESC"
+        },
+        "requirements_review_notifications": {
+            "type": "bool",
+            "default": 1,
+            "label": "PLG_REQUIREMENTS_REVIEW_NOTIFICATIONS",
+            "description": "PLG_REQUIREMENTS_REVIEW_NOTIFICATIONS_DESC"
         },
         "requirements_overview_previous_years": {
             "type": "int",

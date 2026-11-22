@@ -56,8 +56,17 @@ therefore an own menu entry; its texts are available in English and German.
   shows each renewal as the window it is valid for.
   The same overview is available as a widget of the overview page, with its own setting for who sees
   it and how many previous periods it shows.
-* **Administrative review:** per requirement and period, the coverage of every member, with the
-  accepted credits editable in place (administrators only).
+* **Review:** optional, switched on in the settings. Each requirement has a review mode: no review;
+  optional, on request of the member; approval required, on submission or for every activity;
+  submission of each finished period by a deadline; or audits that only the reviewers start. A
+  reviewer decides per credit - accepted amount, status (accepted, partially accepted, not accepted,
+  clarification needed) and a comment. In the approval modes a credit counts once accepted and is
+  shown as pending until then. Members submit activities or periods, share what a reviewer asked for,
+  answer questions and ask for a new decision; reviewers work on the review page, which lists what
+  needs review, what was requested, who has not submitted and what is overdue, saves each row on its
+  own and shows each activity read-only in a pop-up. Reviewers are roles and/or members; administrators
+  of the plugin are not reviewers by being administrators. Reviews are mailed to the member and the
+  reviewer. Without reviews the page lists the coverage of every member per requirement and period.
 * **Import:** a wizard reads a CSV or spreadsheet of activities and their credits (file, column
   mapping, preview, import, result). Rows that were imported before are recognised and skipped.
 * **Certificate files:** optionally members attach the certificate they received to an activity. The
@@ -70,7 +79,7 @@ therefore an own menu entry; its texts are available in English and German.
   |---|---|
   | `provider-add`, `-list`, `-update`, `-delete` | providers |
   | `activity-add`, `-list`, `-update`, `-submit`, `-delete` | activities |
-  | `credit-set`, `credit-delete` | the credited periods of an activity |
+  | `credit-set`, `credit-delete` | the credited periods of an activity; `credit-set` also records a reviewer's decision |
   | `file-add`, `-list`, `-remove`, `files-gc` | certificate files; `files-gc` reports orphans and deletes them with `--commit` |
   | `requirement-add`, `-list`, `-update`, `-delete` | requirement types |
   | `rule-add`, `-list`, `-update`, `-delete` | role rules |
@@ -92,11 +101,17 @@ therefore an own menu entry; its texts are available in English and German.
 | Maximum file size (MiB) | 10 | The server's own upload limit still applies. |
 | Allowed file types | pdf,jpg,jpeg,png | Comma-separated; only pdf, jpg and png can be stored. |
 | Total storage (MiB) | 0 | The size of all certificates of the organisation; 0 means no limit. |
+| Reviews | off | Switches the review of activities on; off hides everything review-related. |
+| Reviewer roles, Reviewers | – | Roles and/or individual members who review. |
+| Choice of reviewer | configured reviewers | Whether a review goes to all configured reviewers, to one of them picked by the person submitting or requesting it, or to any member or role (peer review). |
+| Editing during a review | locked | Whether a member may change an activity while a credit of it waits for a decision. |
+| Editing after a decision | allowed | Whether a member may change an activity once its credits are decided; the decision stays either way. |
+| Review mails | on | Mails to the member and the reviewers about submissions, requests, decisions and finished reviews. |
 
 ## Database
 
 `req_providers`, `req_activities`, `req_requirement_types`, `req_requirement_role_rules`,
-`req_activity_credits` and `req_activity_files`, with the table prefix of the installation.
+`req_activity_credits`, `req_activity_files` and `req_reviews`, with the table prefix of the installation.
 
 ## Tests
 

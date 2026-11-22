@@ -16,6 +16,9 @@ use AdmidioPlugin\Requirements\Service\ActivityFileService;
 use AdmidioPlugin\Requirements\Service\FulfilmentService;
 use AdmidioPlugin\Requirements\Service\ProviderService;
 use AdmidioPlugin\Requirements\Service\RequirementTypeService;
+use AdmidioPlugin\Requirements\Service\ReviewNotifier;
+use AdmidioPlugin\Requirements\Service\ReviewService;
+use AdmidioPlugin\Requirements\Entity\Review;
 use AdmidioPlugin\Requirements\RequirementsPlugin;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
@@ -24,6 +27,12 @@ use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
  */
 class ActivityPresenter extends RequirementsPresenter
 {
+    /** @var array<int,array{submit:bool,reReview:bool,resubmit:bool}> review actions of the activities of a page */
+    private array $reviewActionsCache = array();
+
+    /** @var array<string,string> period review actions of the group headings of a page */
+    private array $periodActionCache = array();
+
     /**
      * Give every bar of the fulfilment overview the link to the activities that make it up, which is
      * the answer to "where does this number come from" - the question a bar always raises and never
@@ -349,9 +358,11 @@ class ActivityPresenter extends RequirementsPresenter
             $this->pageUrl('rules.php'),
             'bi-list-check'
         );
-        if ($isAdmin) {
+        if (ReviewPresenter::mayOpen()) {
             $this->addPageFunctionsMenuItem('menu_item_requirements_review',
                 $gL10n->get('PLG_REQUIREMENTS_REVIEW'), $this->pageUrl('review.php'), 'bi-clipboard-data');
+        }
+        if ($isAdmin) {
             $this->addPageFunctionsMenuItem('menu_item_requirements_providers',
                 $gL10n->get('PLG_REQUIREMENTS_PROVIDERS'), $this->pageUrl('providers.php'), 'bi-shop');
             $this->addSettingsMenuItem();
@@ -382,6 +393,10 @@ class ActivityPresenter extends RequirementsPresenter
         ), static fn($value): bool => $value !== '' && $value !== 0));
         $this->assignSmartyVariable('overviewEarlierUrl', $hasEarlier ? $overviewUrl($overviewOffset + 1) : '');
         $this->assignSmartyVariable('overviewLaterUrl', $overviewOffset > 0 ? $overviewUrl($overviewOffset - 1) : '');
+        // What the member is asked to do about reviews, or has under way.
+        $this->assignSmartyVariable('reviewAgenda', $filter['userId'] === null || $filter['userId'] === $userId
+            ? $this->reviewAgenda($userId) : array());
+
         // Say so rather than silently hiding the card when nothing applies to this member.
         $this->assignSmartyVariable(
             'overviewHint',
@@ -506,14 +521,15 @@ class ActivityPresenter extends RequirementsPresenter
                     }
                     last = row.group;
                     const heading = $("<tr class=\"admidio-group-heading fw-bold\"></tr>");
+                    const action = row.groupAction ? " <span class=\"ms-2 fw-normal\">" + row.groupAction + "</span>" : "";
                     if (creditsAt > 0) {
-                        heading.append($("<td></td>").attr("colspan", creditsAt).html(row.group));
+                        heading.append($("<td></td>").attr("colspan", creditsAt).html(row.group + action));
                         heading.append($("<td></td>").addClass(creditsClass).html(row.groupTotal));
                         if (shown.length - creditsAt - 1 > 0) {
                             heading.append($("<td></td>").attr("colspan", shown.length - creditsAt - 1));
                         }
                     } else {
-                        heading.append($("<td></td>").attr("colspan", shown.length).html(row.group
+                        heading.append($("<td></td>").attr("colspan", shown.length).html(row.group + action
                             + (row.groupTotal === "" ? "" : "<span class=\"float-end\">" + row.groupTotal + "</span>")));
                     }
                     $(rows).eq(i).before(heading);
@@ -788,6 +804,22 @@ class ActivityPresenter extends RequirementsPresenter
             $title = SecurityUtils::encodeHTML((string) $row['rqa_title']);
             $actions = array();
             $actions[] = array('id' => 'edit', 'url' => $editUrl, 'icon' => 'bi bi-pencil-square', 'tooltip' => $gL10n->get('SYS_EDIT'));
+            // The review of the activity, for its member: submit it, ask for a new decision, or
+            // answer a question of the reviewer.
+            if ((int) $row['rqa_user_id'] === self::currentUserId()) {
+                $reviewActions = $this->reviewActionsCache[(int) $row['rqa_id']]
+                    ??= (new ReviewService($gDb))->activityActions((int) $row['rqa_id']);
+                foreach (array(
+                    'submit' => array('submit-activity', 'bi bi-clipboard-check', 'PLG_REQUIREMENTS_REVIEW_SUBMIT_ACTIVITY'),
+                    'resubmit' => array('resubmit', 'bi bi-reply', 'PLG_REQUIREMENTS_REVIEW_RESUBMIT'),
+                    'reReview' => array('rereview', 'bi bi-arrow-repeat', 'PLG_REQUIREMENTS_REVIEW_REREVIEW')
+                ) as $flag => [$action, $icon, $label]) {
+                    if ($reviewActions[$flag]) {
+                        $actions[] = array('id' => 'review-' . $action, 'icon' => $icon, 'tooltip' => $gL10n->get($label),
+                            'url' => $this->pageUrl('index.php', array('mode' => 'review', 'action' => $action, 'uuid' => $row['rqa_uuid'])));
+                    }
+                }
+            }
             // A draft only exists under the until_submitted policy, where submitting is what hands
             // the activity over for review - and the only way out of draft for its owner.
             if ($editable && (string) $row['rqa_status'] === 'draft') {
@@ -817,6 +849,7 @@ class ActivityPresenter extends RequirementsPresenter
                 'DT_RowId' => $rowId,
                 'group' => $group,
                 'groupTotal' => $groupTotal,
+                'groupAction' => $groupBy === 'period' ? $this->periodReviewAction($row) : '',
                 'period' => SecurityUtils::encodeHTML($periodText),
                 'date' => SecurityUtils::encodeHTML($date),
                 'title' => '<a href="' . $editUrl . '">' . SecurityUtils::encodeHTML((string) $row['rqa_title']) . '</a>',
@@ -829,7 +862,8 @@ class ActivityPresenter extends RequirementsPresenter
                 'certificate' => SecurityUtils::encodeHTML($formatDate($row['rqa_certificate_date'])),
                 'files' => $this->filesCell(
                     $filesByActivity[(int) $row['rqa_id']] ?? array(),
-                    $editable ? (string) $row['rqa_uuid'] : ''
+                    $editable || ((int) $row['rqa_user_id'] === self::currentUserId() && $entity->mayAddFiles())
+                        ? (string) $row['rqa_uuid'] : ''
                 ),
                 'actions' => $this->statusIcon($row) . self::actionsHtml(ListActions::filter('requirements-activities', $actions, $row))
             );
@@ -1116,7 +1150,12 @@ class ActivityPresenter extends RequirementsPresenter
         global $gL10n;
 
         $status = (string) ($activity['rqa_status'] ?? '');
-        $verdict = (string) ($activity['rqa_review_status'] ?? '');
+        // A row of the list is one credit, and the decision is that credit's.
+        $verdict = (string) ($activity['rac_review_status'] ?? '');
+        if ($verdict === ReviewService::CREDIT_OPEN && $status !== 'draft' && $status !== 'withdrawn') {
+            return '<i class="bi bi-hourglass-split text-primary" data-bs-toggle="tooltip" title="'
+                . SecurityUtils::encodeHTML($gL10n->get('PLG_REQUIREMENTS_REVIEW_OPEN')) . '"></i> ';
+        }
 
         if ($status === 'draft') {
             [$icon, $colour, $text] = array('bi-pencil-fill', 'text-warning', $gL10n->get('PLG_REQUIREMENTS_STATUS_DRAFT'));
@@ -1157,7 +1196,9 @@ class ActivityPresenter extends RequirementsPresenter
         $readOnly = false;
         if ($activityUUID !== '') {
             $activity->readDataByUuid($activityUUID);
-            if ((int) $activity->getValue('rqa_id') === 0 || !$activity->isVisible()) {
+            // A reviewer sees what a review covers of somebody's activity in the pop-up of the review
+            // page; the form, with every credit of the activity, is its member's and the administrators'.
+            if ((int) $activity->getValue('rqa_id') === 0 || !$activity->isOwnedOrAdministered()) {
                 throw new Exception('SYS_NO_RIGHTS');
             }
             $readOnly = !$activity->isEditable();
@@ -1283,7 +1324,6 @@ class ActivityPresenter extends RequirementsPresenter
             $claimedField = 'credit_' . $typeId;
             $periodField = 'period_' . $typeId;
             $quarterField = 'periodq_' . $typeId;
-            $acceptedField = 'accepted_' . $typeId;
 
             $form->addInput($claimedField, $gL10n->get('PLG_REQUIREMENTS_CREDITS_CLAIMED'),
                 (string) ($current['rac_credits_claimed'] ?? ''),
@@ -1296,12 +1336,6 @@ class ActivityPresenter extends RequirementsPresenter
                 $form->addSelectBox($quarterField, $gL10n->get('PLG_REQUIREMENTS_PERIOD_QUARTER'),
                     array('1' => 'Q1', '2' => 'Q2', '3' => 'Q3', '4' => 'Q4'),
                     array('showContextDependentFirstEntry' => false));
-            }
-            if ($isAdmin) {
-                $form->addInput($acceptedField, $gL10n->get('PLG_REQUIREMENTS_CREDITS_ACCEPTED'),
-                    $current === null || $current['rac_credits_accepted'] === null
-                        ? '' : (string) $current['rac_credits_accepted'],
-                    array('type' => 'number', 'minNumber' => 0, 'step' => 0.01));
             }
 
             $ref = (string) ($current['rac_period_reference'] ?? $defaultPeriodDate);
@@ -1321,11 +1355,15 @@ class ActivityPresenter extends RequirementsPresenter
                 'quarterValue' => $parts['quarter'],
                 'claimedId' => $claimedField,
                 'claimedValue' => SecurityUtils::encodeHTML((string) ($current['rac_credits_claimed'] ?? '')),
-                'acceptedId' => $isAdmin ? $acceptedField : '',
-                'acceptedValue' => SecurityUtils::encodeHTML(
-                    $current === null || $current['rac_credits_accepted'] === null
-                        ? '' : (string) $current['rac_credits_accepted']
-                )
+                'acceptedValue' => $current === null || $current['rac_credits_accepted'] === null
+                    ? '' : self::formatCredits($current['rac_credits_accepted']),
+                'reviewStatus' => (string) ($current['rac_review_status'] ?? ''),
+                'reviewStatusText' => (string) ($current['rac_review_status'] ?? '') === ''
+                    ? '' : $gL10n->get(ReviewNotifier::creditStatusLabelKey((string) $current['rac_review_status'])),
+                'reviewStatusClass' => ReviewPresenter::creditStatusClass((string) ($current['rac_review_status'] ?? '')),
+                'reviewComment' => SecurityUtils::encodeHTML((string) ($current['rac_review_comment'] ?? '')),
+                'reviewChanged' => (string) ($current['rac_review_changed'] ?? '') === '' ? ''
+                    : $gL10n->get('PLG_REQUIREMENTS_REVIEW_CHANGED_SINCE', array(substr((string) $current['rac_review_changed'], 0, 10)))
             );
             if (!$shown) {
                 $optionalCreditTypes[$typeId] = SecurityUtils::encodeHTML((string) $type['rqt_name']);
@@ -1467,19 +1505,6 @@ class ActivityPresenter extends RequirementsPresenter
                 'showContextDependentFirstEntry' => false,
                 'property' => $choiceProperty
             ));
-            $form->addSelectBox('rqa_review_status', $gL10n->get('PLG_REQUIREMENTS_REVIEW_STATUS'), array(
-                '' => '',
-                'open' => $gL10n->get('PLG_REQUIREMENTS_REVIEW_OPEN'),
-                'accepted' => $gL10n->get('PLG_REQUIREMENTS_REVIEW_ACCEPTED'),
-                'partially_accepted' => $gL10n->get('PLG_REQUIREMENTS_REVIEW_PARTIALLY_ACCEPTED'),
-                'not_accepted' => $gL10n->get('PLG_REQUIREMENTS_REVIEW_NOT_ACCEPTED'),
-                'clarification' => $gL10n->get('PLG_REQUIREMENTS_REVIEW_CLARIFICATION')
-            ), array(
-                'defaultValue' => (string) $activity->getValue('rqa_review_status'),
-                'property' => $choiceProperty
-            ));
-            $form->addMultilineTextInput('rqa_review_comments', $gL10n->get('PLG_REQUIREMENTS_REVIEW_COMMENTS'),
-                (string) $activity->getValue('rqa_review_comments'), 3, array('property' => $textProperty));
         }
 
         if (!$readOnly) {
@@ -1490,11 +1515,356 @@ class ActivityPresenter extends RequirementsPresenter
 
         $this->assignSmartyVariable('readOnly', $readOnly);
         $this->assignSmartyVariable('creditFields', $creditFields);
-        $this->assignSmartyVariable('showReview', $isAdmin);
+        // The decisions on the credits, read-only: they are the reviewer's, made on the review page.
+        $showReview = false;
+        foreach ($creditFields as $field) {
+            $showReview = $showReview || $field['reviewStatus'] !== '' || $field['acceptedValue'] !== '';
+        }
+        $this->assignSmartyVariable('showReview', $showReview);
+        $this->assignSmartyVariable('showActivityStatus', $isAdmin);
+        $this->assignSmartyVariable('lockedByReview', $activityUUID !== '' && $readOnly && $activity->isLockedByReview());
+        if ($activityUUID !== '') {
+            $this->addReviewMenuItems($activity);
+        }
         $this->assignSmartyVariable('userCreatedName', $activity->getNameOfCreatingUser());
         $this->assignSmartyVariable('userCreatedTimestamp', $activity->getValue('rqa_timestamp_create'));
         $this->assignSmartyVariable('lastUserEditedName', $activity->getNameOfLastEditingUser());
         $this->assignSmartyVariable('lastUserEditedTimestamp', $activity->getValue('rqa_timestamp_change'));
+        $form->addToHtmlPage();
+        $gCurrentSession->addFormObject($form);
+    }
+
+    /**
+     * The review actions of an activity in the page-functions menu of its form, for its member.
+     */
+    private function addReviewMenuItems(Activity $activity): void
+    {
+        global $gDb, $gL10n;
+
+        if ((int) $activity->getValue('rqa_user_id') !== self::currentUserId()) {
+            return;
+        }
+        $actions = (new ReviewService($gDb))->activityActions((int) $activity->getValue('rqa_id'));
+        foreach (array(
+            'submit' => array('submit-activity', 'bi-clipboard-check', 'PLG_REQUIREMENTS_REVIEW_SUBMIT_ACTIVITY'),
+            'resubmit' => array('resubmit', 'bi-reply', 'PLG_REQUIREMENTS_REVIEW_RESUBMIT'),
+            'reReview' => array('rereview', 'bi-arrow-repeat', 'PLG_REQUIREMENTS_REVIEW_REREVIEW')
+        ) as $flag => [$action, $icon, $label]) {
+            if ($actions[$flag]) {
+                $this->addPageFunctionsMenuItem('menu_item_requirements_review_' . $action, $gL10n->get($label),
+                    $this->pageUrl('index.php', array('mode' => 'review', 'action' => $action,
+                        'uuid' => (string) $activity->getValue('rqa_uuid'))), $icon);
+            }
+        }
+    }
+
+    /**
+     * The member's reviews that are not over, and the periods they still have to submit, each with
+     * what can be done about it.
+     *
+     * @return array<int,array<string,mixed>>
+     * @throws Exception
+     */
+    private function reviewAgenda(int $userId): array
+    {
+        global $gDb, $gL10n, $gSettingsManager;
+
+        $reviews = new ReviewService($gDb);
+        $agenda = $reviews->memberAgenda($userId);
+        $notifier = new ReviewNotifier($gDb, $reviews);
+        $format = static fn(?string $ymd): string => $ymd === null || $ymd === '' ? ''
+            : \DateTimeImmutable::createFromFormat('!Y-m-d', substr($ymd, 0, 10))->format($gSettingsManager->getString('system_date'));
+
+        $items = array();
+        foreach ($agenda['reviews'] as $row) {
+            $review = new Review($gDb);
+            $review->setArray($row);
+            $status = (string) $row['rrv_status'];
+            $id = 'adm_req_agenda_' . $row['rrv_uuid'];
+            $actions = array();
+            if ($status === Review::STATUS_REQUESTED) {
+                $actions[] = array('label' => $gL10n->get('PLG_REQUIREMENTS_REVIEW_SHARE'), 'icon' => 'bi-share',
+                    'url' => $this->pageUrl('index.php', array('mode' => 'review', 'action' => 'share', 'review' => $row['rrv_uuid'])));
+            }
+            if ($status === Review::STATUS_CLARIFICATION) {
+                $actions[] = array('label' => $gL10n->get('PLG_REQUIREMENTS_REVIEW_RESUBMIT'), 'icon' => 'bi-reply',
+                    'url' => $this->pageUrl('index.php', array('mode' => 'review', 'action' => 'resubmit', 'review' => $row['rrv_uuid'])));
+            }
+            if ((string) $row['rrv_kind'] === Review::KIND_SUBMISSION
+                && in_array($status, array(Review::STATUS_OPEN, Review::STATUS_CLARIFICATION), true)) {
+                $actions[] = array('label' => $gL10n->get('PLG_REQUIREMENTS_REVIEW_WITHDRAW'), 'icon' => 'bi-x-circle',
+                    'confirm' => $gL10n->get('PLG_REQUIREMENTS_REVIEW_WITHDRAW_CONFIRM'),
+                    'dataHref' => 'callUrlHideElement(\'' . $id . '\', \''
+                        . $this->pageUrl('index.php', array('mode' => 'review-withdraw', 'review' => $row['rrv_uuid'])) . '\', \''
+                        . $GLOBALS['gCurrentSession']->getCsrfToken() . '\', \'admReqReloadPage\')');
+            }
+            $due = (string) ($row['rrv_due_date'] ?? '');
+            $items[] = array(
+                'id' => $id,
+                'label' => SecurityUtils::encodeHTML($notifier->scopeLabel($review)),
+                'statusText' => $gL10n->get('PLG_REQUIREMENTS_REVIEW_STATE_' . strtoupper($status)),
+                'statusClass' => $status === Review::STATUS_CLARIFICATION || $status === Review::STATUS_REQUESTED ? 'text-bg-warning' : 'text-bg-primary',
+                'due' => $format($due),
+                'overdue' => $due !== '' && $due < DATE_NOW,
+                'message' => SecurityUtils::encodeHTML((string) ($row['rrv_message'] ?? '')),
+                'actions' => $actions
+            );
+        }
+        foreach ($agenda['due'] as $due) {
+            $items[] = array(
+                'id' => 'adm_req_agenda_due_' . $due['type']['rqt_id'] . '_' . str_replace('-', '', $due['periodStart']),
+                'label' => SecurityUtils::encodeHTML((string) $due['type']['rqt_name'] . ' – ' . $due['periodLabel']),
+                'statusText' => $gL10n->get('PLG_REQUIREMENTS_REVIEW_NOT_SUBMITTED'),
+                'statusClass' => $due['overdue'] ? 'text-bg-danger' : 'text-bg-warning',
+                'due' => $format($due['dueDate']),
+                'overdue' => $due['overdue'],
+                'message' => '',
+                'actions' => array(array('label' => $gL10n->get('PLG_REQUIREMENTS_REVIEW_SUBMIT_PERIOD'), 'icon' => 'bi-clipboard-check',
+                    'url' => $this->pageUrl('index.php', array('mode' => 'review', 'action' => 'submit-period',
+                        'requirement' => $due['type']['rqt_uuid'], 'period' => $due['periodStart']))))
+            );
+        }
+        return $items;
+    }
+
+    /**
+     * The review of a credited period in its group heading: what it stands at, or the action that
+     * submits it - for the member's own list only, and only for a requirement whose periods are
+     * submitted.
+     */
+    private function periodReviewAction(array $row): string
+    {
+        global $gDb, $gL10n;
+
+        if ($row['rac_id'] === null || (int) $row['rqa_user_id'] !== self::currentUserId() || !ReviewService::isEnabled()
+            || (string) $row['rqt_period_anchor'] !== 'calendar') {
+            return '';
+        }
+        $typeId = (int) $row['rqt_id'];
+        $key = $typeId . '|' . $row['rac_period_reference'];
+        if (isset($this->periodActionCache[$key])) {
+            return $this->periodActionCache[$key];
+        }
+
+        $reviews = new ReviewService($gDb);
+        $type = new RequirementType($gDb, $typeId);
+        $html = '';
+        if ((int) $type->getValue('rqt_parent_id') === 0) {
+            [$start] = FulfilmentService::periodFor($type, ReviewService::date((string) $row['rac_period_reference']));
+            $review = $reviews->findActive(array('rrv_user_id' => self::currentUserId(),
+                'rrv_requirement_type_id' => $typeId, 'rrv_period_reference' => $start->format('Y-m-d')));
+            if ($review !== null) {
+                $status = (string) $review->getValue('rrv_status');
+                $html = '<span class="badge ' . ($status === Review::STATUS_OPEN ? 'text-bg-primary' : 'text-bg-warning') . '">'
+                    . SecurityUtils::encodeHTML($gL10n->get('PLG_REQUIREMENTS_REVIEW_STATE_' . strtoupper($status))) . '</span>';
+            } elseif (in_array($reviews->effectiveMode($typeId), ReviewService::PERIOD_SUBMISSION_MODES, true)) {
+                $html = '<a class="btn btn-sm btn-outline-primary py-0" href="' . $this->pageUrl('index.php', array(
+                    'mode' => 'review', 'action' => 'submit-period',
+                    'requirement' => (string) $type->getValue('rqt_uuid'), 'period' => $start->format('Y-m-d')
+                )) . '"><i class="bi bi-clipboard-check"></i> '
+                    . SecurityUtils::encodeHTML($gL10n->get('PLG_REQUIREMENTS_REVIEW_SUBMIT_PERIOD')) . '</a>';
+            }
+        }
+        return $this->periodActionCache[$key] = $html;
+    }
+
+    /**
+     * The read-only view of an activity for the pop-up of the review page: everything a reviewer
+     * needs to judge it, and nothing they may not see - only the credits they review, with the
+     * certificates. No form and no change history.
+     *
+     * @throws Exception
+     */
+    public function viewHtml(string $activityUuid, string $requirementUuid = ''): string
+    {
+        global $gDb, $gL10n, $gSettingsManager;
+
+        $activity = new Activity($gDb);
+        $activity->readDataByUuid($activityUuid);
+        if ((int) $activity->getValue('rqa_id') === 0 || !$activity->isVisible()) {
+            throw new Exception('SYS_NO_RIGHTS');
+        }
+        $activityId = (int) $activity->getValue('rqa_id');
+        $full = $activity->isOwnedOrAdministered();
+        $reviewable = $full ? null : (new ReviewService($gDb))->reviewableCreditIds($activityId, null, false);
+
+        $format = static fn(string $ymd): string => $ymd === '' ? ''
+            : \DateTimeImmutable::createFromFormat('!Y-m-d', substr($ymd, 0, 10))->format($gSettingsManager->getString('system_date'));
+        $date = $format((string) $activity->getValue('rqa_begin_date', 'database'));
+        $time = (string) $activity->getValue('rqa_begin_time', 'database');
+        if ($time !== '') {
+            $date .= ' ' . substr($time, 0, 5);
+        }
+        $end = (string) $activity->getValue('rqa_end_date', 'database');
+        if ($end !== '') {
+            $date .= ' – ' . $format($end);
+            $endTime = (string) $activity->getValue('rqa_end_time', 'database');
+            if ($endTime !== '') {
+                $date .= ' ' . substr($endTime, 0, 5);
+            }
+        }
+
+        $member = new User($gDb, $GLOBALS['gProfileFields'], (int) $activity->getValue('rqa_user_id'));
+        $fields = array(
+            'SYS_MEMBER' => SecurityUtils::encodeHTML($member->readableName()),
+            'PLG_REQUIREMENTS_PROVIDER' => SecurityUtils::encodeHTML((string) $activity->getValue('rqa_provider_name')),
+            'SYS_DATE' => SecurityUtils::encodeHTML($date),
+            'PLG_REQUIREMENTS_LOCATION' => nl2br(SecurityUtils::encodeHTML((string) $activity->getValue('rqa_location', 'database'))),
+            'PLG_REQUIREMENTS_ATTENDANCE' => (float) $activity->getValue('rqa_attendance') > 0 ? self::formatCredits($activity->getValue('rqa_attendance')) : '',
+            'PLG_REQUIREMENTS_CERTIFICATE_DATE' => $format((string) $activity->getValue('rqa_certificate_date', 'database')),
+            'SYS_WEBSITE' => (string) $activity->getValue('rqa_url', 'database') === '' ? ''
+                : '<a href="' . SecurityUtils::encodeHTML((string) $activity->getValue('rqa_url', 'database')) . '" target="_blank" rel="noopener">'
+                    . SecurityUtils::encodeHTML((string) $activity->getValue('rqa_url', 'database')) . '</a>',
+            'SYS_DESCRIPTION' => nl2br(SecurityUtils::encodeHTML((string) $activity->getValue('rqa_description', 'database'))),
+            'SYS_COMMENT' => nl2br(SecurityUtils::encodeHTML((string) $activity->getValue('rqa_comments', 'database')))
+        );
+
+        $html = '<div class="modal-header"><h3 class="modal-title">' . SecurityUtils::encodeHTML((string) $activity->getValue('rqa_title'))
+            . '</h3><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="' . $gL10n->get('SYS_CLOSE') . '"></button></div>'
+            . '<div class="modal-body"><dl class="row mb-3">';
+        foreach ($fields as $label => $value) {
+            if (trim(strip_tags($value)) === '') {
+                continue;
+            }
+            $html .= '<dt class="col-sm-4">' . $gL10n->get($label) . '</dt><dd class="col-sm-8">' . $value . '</dd>';
+        }
+        $html .= '</dl>';
+
+        $credits = $gDb->getArrayFromSql(
+            'SELECT rac.*, rqt.rqt_name, rqt.rqt_uuid, rqt.rqt_usr_id, rqt.rqt_period_anchor, rqt.rqt_period_unit
+               FROM ' . \AdmidioPlugin\Requirements\Database\RequirementsTables::activityCredits() . ' AS rac
+         INNER JOIN ' . \AdmidioPlugin\Requirements\Database\RequirementsTables::requirementTypes() . ' AS rqt ON rqt.rqt_id = rac.rac_requirement_type_id
+              WHERE rac.rac_activity_id = ?
+           ORDER BY rqt.rqt_sequence, rqt.rqt_name',
+            array($activityId)
+        );
+        $html .= '<h4 class="h6">' . $gL10n->get('PLG_REQUIREMENTS_ACTIVITY_CREDITS') . '</h4>'
+            . '<table class="table table-sm"><thead><tr><th>' . $gL10n->get('PLG_REQUIREMENTS_REQUIREMENT_TYPE') . '</th><th>'
+            . $gL10n->get('PLG_REQUIREMENTS_CREDITED_PERIOD') . '</th><th class="text-end">' . $gL10n->get('PLG_REQUIREMENTS_CREDITS_CLAIMED')
+            . '</th><th class="text-end">' . $gL10n->get('PLG_REQUIREMENTS_CREDITS_ACCEPTED') . '</th><th>'
+            . $gL10n->get('PLG_REQUIREMENTS_REVIEW') . '</th></tr></thead><tbody>';
+        foreach ($credits as $credit) {
+            if ($reviewable !== null && !in_array((int) $credit['rac_id'], $reviewable, true)) {
+                continue;
+            }
+            $status = (string) ($credit['rac_review_status'] ?? '');
+            $html .= '<tr' . ($requirementUuid !== '' && $credit['rqt_uuid'] === $requirementUuid ? ' class="table-active"' : '') . '><td>'
+                . SecurityUtils::encodeHTML((string) $credit['rqt_name']) . '</td><td>'
+                . SecurityUtils::encodeHTML(self::periodText($credit)) . '</td><td class="text-end">'
+                . self::formatCredits($credit['rac_credits_claimed']) . '</td><td class="text-end">'
+                . ($credit['rac_credits_accepted'] === null ? '&ndash;' : self::formatCredits($credit['rac_credits_accepted'])) . '</td><td>'
+                . ($status === '' ? '' : '<span class="badge ' . ReviewPresenter::creditStatusClass($status) . '">'
+                    . SecurityUtils::encodeHTML($gL10n->get(ReviewNotifier::creditStatusLabelKey($status))) . '</span>')
+                . ((string) ($credit['rac_review_comment'] ?? '') === '' ? ''
+                    : '<div class="small">' . nl2br(SecurityUtils::encodeHTML((string) $credit['rac_review_comment'])) . '</div>')
+                . '</td></tr>';
+        }
+        $html .= '</tbody></table>';
+
+        if (ActivityFileService::isEnabled()) {
+            $files = (new ActivityFileService($gDb))->listForActivities(array($activityId))[$activityId] ?? array();
+            if ($files !== array()) {
+                $html .= '<h4 class="h6">' . $gL10n->get('PLG_REQUIREMENTS_FILES') . '</h4><ul class="list-unstyled">';
+                foreach ($files as $file) {
+                    $html .= '<li><i class="bi bi-paperclip"></i> <a href="' . $this->pageUrl('file.php', array('uuid' => $file['raf_uuid']))
+                        . '">' . SecurityUtils::encodeHTML((string) $file['raf_name']) . '</a></li>';
+                }
+                $html .= '</ul>';
+            }
+        }
+        return $html . '</div>';
+    }
+
+    /**
+     * The form of a review action of the member: submitting an activity or a period, sharing what a
+     * reviewer asked for, asking for a new decision, or answering a question. It says what the
+     * action covers, takes a message - the reason, for a new decision - and, where the settings let
+     * the member choose, the reviewer.
+     *
+     * @throws Exception|\Smarty\Exception
+     */
+    public function createReviewForm(string $action, string $activityUuid, string $reviewUuid, string $requirementUuid, string $period): void
+    {
+        global $gDb, $gL10n, $gCurrentSession;
+
+        if (!ReviewService::isEnabled()) {
+            throw new Exception('SYS_NO_RIGHTS');
+        }
+        $reviews = new ReviewService($gDb);
+        $notifier = new ReviewNotifier($gDb, $reviews);
+
+        $scope = '';
+        $description = '';
+        $again = false;
+        switch ($action) {
+            case 'submit-activity':
+            case 'rereview':
+            case 'resubmit':
+                if ($activityUuid !== '') {
+                    $activity = new Activity($gDb);
+                    $activity->readDataByUuid($activityUuid);
+                    if ((int) $activity->getValue('rqa_id') === 0 || (int) $activity->getValue('rqa_user_id') !== self::currentUserId()) {
+                        throw new Exception('SYS_NO_RIGHTS');
+                    }
+                    $scope = (string) $activity->getValue('rqa_title');
+                    break;
+                }
+                // Answering the questions of a whole review.
+            case 'share':
+                $review = new Review($gDb);
+                $review->readDataByUuid($reviewUuid);
+                if ((int) $review->getValue('rrv_id') === 0 || (int) $review->getValue('rrv_user_id') !== self::currentUserId()) {
+                    throw new Exception('SYS_NO_RIGHTS');
+                }
+                $scope = $notifier->scopeLabel($review);
+                $description = (string) $review->getValue('rrv_message');
+                break;
+            case 'submit-period':
+                $type = new RequirementType($gDb);
+                $type->readDataByUuid($requirementUuid);
+                if ((int) $type->getValue('rqt_id') === 0 || $period === '') {
+                    throw new Exception('SYS_INVALID_PAGE_VIEW');
+                }
+                [$periodStart, $periodEnd, $label] = FulfilmentService::periodFor($type, ReviewService::date($period));
+                $scope = (string) $type->getValue('rqt_name') . ' – ' . $label;
+                // Everything of the period is decided: submitting it again asks for a new decision,
+                // which needs the member's arguments.
+                $state = $reviews->periodState($type, self::currentUserId(), $periodStart->format('Y-m-d'), $periodEnd->format('Y-m-d'));
+                $again = $state['undecided'] === 0 && $state['decided'] > 0;
+                break;
+            default:
+                throw new Exception('SYS_INVALID_PAGE_VIEW');
+        }
+
+        $titles = array(
+            'submit-activity' => 'PLG_REQUIREMENTS_REVIEW_SUBMIT_ACTIVITY',
+            'submit-period' => 'PLG_REQUIREMENTS_REVIEW_SUBMIT_PERIOD',
+            'share' => 'PLG_REQUIREMENTS_REVIEW_SHARE',
+            'rereview' => 'PLG_REQUIREMENTS_REVIEW_REREVIEW',
+            'resubmit' => 'PLG_REQUIREMENTS_REVIEW_RESUBMIT'
+        );
+        $this->setHtmlID('adm_requirements_review_action');
+        $this->setHeadline($gL10n->get($titles[$action]));
+
+        $form = new FormPresenter(
+            'adm_requirements_review_action_form',
+            'requirements.review.action.tpl',
+            $this->pageUrl('index.php', array_filter(array('mode' => 'review-save', 'action' => $action, 'uuid' => $activityUuid,
+                'review' => $reviewUuid, 'requirement' => $requirementUuid, 'period' => $period))),
+            $this
+        );
+        $needsReason = $action === 'rereview' || $again;
+        $form->addMultilineTextInput('message', $gL10n->get($needsReason ? 'PLG_REQUIREMENTS_REVIEW_REASON' : 'SYS_MESSAGE'),
+            '', 4, array('property' => $needsReason ? FormPresenter::FIELD_REQUIRED : FormPresenter::FIELD_DEFAULT));
+        $hasReviewer = in_array($action, array('submit-activity', 'submit-period'), true)
+            && ReviewPresenter::addReviewerChoice($form, $reviews);
+        $form->addSubmitButton('adm_button_save', $gL10n->get($titles[$action]), array('icon' => 'bi-check-lg'));
+
+        $this->assignSmartyVariable('scope', SecurityUtils::encodeHTML($scope));
+        $this->assignSmartyVariable('actionHelp', $gL10n->get($again
+            ? 'PLG_REQUIREMENTS_REVIEW_SUBMIT_PERIOD_AGAIN_HELP' : $titles[$action] . '_HELP'));
+        $this->assignSmartyVariable('requestMessage', nl2br(SecurityUtils::encodeHTML($description)));
+        $this->assignSmartyVariable('hasReviewer', $hasReviewer);
         $form->addToHtmlPage();
         $gCurrentSession->addFormObject($form);
     }

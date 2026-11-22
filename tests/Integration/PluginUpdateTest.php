@@ -20,6 +20,7 @@ final class PluginUpdateTest extends RequirementsDatabaseTestCase
     public function testAnInstallationOfVersion03IsUpdatedToTheCurrentSchema(): void
     {
         $this->outsideTheTransaction(function (Database $db): void {
+            $this->downgradeTo05($db);
             $this->downgradeTo04($db);
             $this->downgradeTo03($db);
             $legacyType = $this->insertLegacyRequirement($db);
@@ -36,7 +37,51 @@ final class PluginUpdateTest extends RequirementsDatabaseTestCase
 
             // A fresh installation without its update steps recorded - what Admidio versions before
             // the fix of PluginInstaller::install() leave - runs the file of its version again.
+            $this->runPluginUpdate($db, '0.6.0');
+            $this->assertSchemaIsCurrent($db);
+        });
+    }
+
+    /**
+     * 0.6 moves the review decision from the activity to its credits: an activity's status and
+     * comment become those of each of its credits.
+     */
+    public function testTheReviewDecisionOf05MovesToTheCredits(): void
+    {
+        global $gCurrentOrgId, $gCurrentUser;
+
+        $this->outsideTheTransaction(function (Database $db) use ($gCurrentOrgId, $gCurrentUser): void {
+            $this->downgradeTo05($db);
+            $userId = (int) $gCurrentUser->getValue('usr_id');
+            $db->queryPrepared(
+                'INSERT INTO ' . RequirementsTables::requirementTypes()
+                . ' (rqt_uuid, rqt_org_id, rqt_name, rqt_period_unit) VALUES (?, ?, ?, ?)',
+                array('00000000-0000-4000-8000-000000000501', (int) $gCurrentOrgId, 'Reviewed in 0.5', 'year')
+            );
+            $typeId = (int) $db->lastInsertId();
+            $db->queryPrepared(
+                'INSERT INTO ' . RequirementsTables::activities()
+                . ' (rqa_uuid, rqa_org_id, rqa_user_id, rqa_title, rqa_begin_date, rqa_status, rqa_review_status, rqa_review_comments)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                array('00000000-0000-4000-8000-000000000502', (int) $gCurrentOrgId, $userId, 'Course', '2025-03-01',
+                    'submitted', 'partially_accepted', 'Only the morning')
+            );
+            $activityId = (int) $db->lastInsertId();
+            $db->queryPrepared(
+                'INSERT INTO ' . RequirementsTables::activityCredits()
+                . ' (rac_uuid, rac_activity_id, rac_requirement_type_id, rac_period_reference, rac_credits_claimed, rac_credits_accepted)
+                   VALUES (?, ?, ?, ?, ?, ?)',
+                array('00000000-0000-4000-8000-000000000503', $activityId, $typeId, '2025-01-01', 8.0, 4.0)
+            );
+
             $this->runPluginUpdate($db, '0.5.0');
+
+            $credit = $db->queryPrepared(
+                'SELECT rac_review_status, rac_review_comment FROM ' . RequirementsTables::activityCredits() . ' WHERE rac_activity_id = ?',
+                array($activityId)
+            )->fetch();
+            $this->assertSame('partially_accepted', $credit['rac_review_status']);
+            $this->assertSame('Only the morning', $credit['rac_review_comment']);
             $this->assertSchemaIsCurrent($db);
         });
     }
@@ -50,6 +95,7 @@ final class PluginUpdateTest extends RequirementsDatabaseTestCase
         global $gCurrentOrgId, $gCurrentUser;
 
         $this->outsideTheTransaction(function (Database $db) use ($gCurrentOrgId, $gCurrentUser): void {
+            $this->downgradeTo05($db);
             $this->downgradeTo04($db);
             $owner = (int) $gCurrentUser->getValue('usr_id');
             $db->queryPrepared(
@@ -94,6 +140,34 @@ final class PluginUpdateTest extends RequirementsDatabaseTestCase
             self::runSchemaScript($db, dirname(__DIR__, 2) . '/db_scripts/install.sql');
             $db->startTransaction();
         }
+    }
+
+    /**
+     * The schema of 0.5: no reviews table, the review decision on the activity.
+     */
+    private function downgradeTo05(Database $db): void
+    {
+        $activities = RequirementsTables::activities();
+        $credits = RequirementsTables::activityCredits();
+        $types = RequirementsTables::requirementTypes();
+        $prefix = TABLE_PREFIX;
+        $mysql = $db->getEngine() === Database::PDO_ENGINE_MYSQL;
+
+        foreach (array(
+            'DROP TABLE ' . RequirementsTables::reviews(),
+            $mysql ? 'DROP INDEX ' . $prefix . '_idx_rac_review_status ON ' . $credits : 'DROP INDEX ' . $prefix . '_idx_rac_review_status',
+            'ALTER TABLE ' . $credits . ' DROP COLUMN rac_review_status',
+            'ALTER TABLE ' . $credits . ' DROP COLUMN rac_review_comment',
+            'ALTER TABLE ' . $credits . ' DROP COLUMN rac_review_changed',
+            'ALTER TABLE ' . $types . ' DROP COLUMN rqt_review_mode',
+            'ALTER TABLE ' . $types . ' DROP COLUMN rqt_review_due_days',
+            'ALTER TABLE ' . $activities . ' ADD COLUMN rqa_review_comments text NULL',
+            'ALTER TABLE ' . $activities . ' ADD COLUMN rqa_review_status varchar(32) NULL',
+            'CREATE INDEX ' . $prefix . '_idx_rqa_review_status ON ' . $activities . ' (rqa_org_id, rqa_review_status)'
+        ) as $sql) {
+            $db->queryPrepared($sql);
+        }
+        $db->initializeTableColumnProperties();
     }
 
     private function downgradeTo04(Database $db): void
@@ -164,7 +238,7 @@ final class PluginUpdateTest extends RequirementsDatabaseTestCase
         $component->setValue('com_update_step', 0);
         $component->save();
 
-        $component->updatePlugin('0.5.0', '');
+        $component->updatePlugin('0.6.0', '');
         $db->initializeTableColumnProperties();
     }
 
@@ -192,6 +266,16 @@ final class PluginUpdateTest extends RequirementsDatabaseTestCase
             array(999999999, $typeId),
             false
         ));
+
+        // 0.6: the review mode, the decision on the credit, and the reviews table.
+        $db->queryPrepared(
+            'UPDATE ' . RequirementsTables::requirementTypes() . ' SET rqt_review_mode = ?, rqt_review_due_days = ? WHERE rqt_id = ?',
+            array('optional', 30, $typeId)
+        );
+        $this->assertSame(0, (int) $db->queryPrepared('SELECT COUNT(*) FROM ' . RequirementsTables::reviews())->fetchColumn());
+        $this->assertSame(0, (int) $db->queryPrepared(
+            'SELECT COUNT(*) FROM ' . RequirementsTables::activityCredits() . ' WHERE rac_review_status IS NOT NULL AND rac_review_comment IS NULL AND rac_review_changed IS NOT NULL'
+        )->fetchColumn());
 
         $db->queryPrepared('DELETE FROM ' . RequirementsTables::requirementTypes() . ' WHERE rqt_id = ?', array($typeId));
     }

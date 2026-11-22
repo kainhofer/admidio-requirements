@@ -33,6 +33,11 @@ final class RequirementsTables
         return TABLE_PREFIX . '_req_activity_files';
     }
 
+    public static function reviews(): string
+    {
+        return TABLE_PREFIX . '_req_reviews';
+    }
+
     private function __construct()
     {
     }

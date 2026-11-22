@@ -7,9 +7,30 @@
         <div class="card-body">
             <form method="get" action="{$filterUrl}" class="row g-2 align-items-end">
                 <input type="hidden" name="mode" value="list">
+                <div class="col-sm-auto">
+                    <label class="form-label small mb-1" for="adm_req_review_status">{$l10n->get('PLG_REQUIREMENTS_STATUS')}</label>
+                    <select name="status" id="adm_req_review_status" class="form-select" onchange="this.form.submit()">
+                        {if $reviewEntries|@count gt 0}
+                            <optgroup label="{$l10n->get('PLG_REQUIREMENTS_REVIEW')}">
+                                {foreach $reviewEntries as $s}
+                                    <option value="{$s.value}" {if $s.selected}selected{/if}>{$s.name}</option>
+                                {/foreach}
+                            </optgroup>
+                        {/if}
+                        {if $mayRoster}
+                            <optgroup label="{$l10n->get('PLG_REQUIREMENTS_COVERAGE')}">
+                                <option value="" {if $allMembersSelected}selected{/if}>{$l10n->get('PLG_REQUIREMENTS_REVIEW_FILTER_ALL_MEMBERS')}</option>
+                                {foreach $coverageEntries as $s}
+                                    <option value="{$s.value}" {if $s.selected}selected{/if}>{$s.name}</option>
+                                {/foreach}
+                            </optgroup>
+                        {/if}
+                    </select>
+                </div>
                 <div class="col-sm">
                     <label class="form-label small mb-1" for="adm_req_review_requirement">{$l10n->get('PLG_REQUIREMENTS_REQUIREMENT_TYPE')}</label>
                     <select name="requirement" id="adm_req_review_requirement" class="form-select" onchange="this.form.submit()">
+                        {if $allowAllTypes}<option value="">{$l10n->get('PLG_REQUIREMENTS_ALL_REQUIREMENTS')}</option>{/if}
                         {foreach $typeOptions as $t}
                             <option value="{$t.uuid}" {if $t.selected}selected{/if}>{$t.name nofilter}</option>
                         {/foreach}
@@ -19,11 +40,11 @@
                     <label class="form-label small mb-1" for="adm_req_review_period">{$periodLabel}</label>
                     {if $periodKind eq 'year'}
                         <input type="number" step="1" min="1900" max="{$maxYear}" name="period" id="adm_req_review_period"
-                               value="{$periodValue}" class="form-control">
+                               value="{$periodValue}" class="form-control"{if $periodOptional} placeholder="{$l10n->get('SYS_ALL')}"{/if}>
                     {elseif $periodKind eq 'quarter'}
                         <div class="input-group">
                             <input type="number" step="1" min="1900" max="{$maxYear}" name="period" id="adm_req_review_period"
-                                   value="{$periodValue}" class="form-control">
+                                   value="{$periodValue}" class="form-control"{if $periodOptional} placeholder="{$l10n->get('SYS_ALL')}"{/if}>
                             <select name="periodq" class="form-select">
                                 {foreach [1,2,3,4] as $q}
                                     <option value="{$q}" {if $quarterValue eq $q}selected{/if}>Q{$q}</option>
@@ -39,13 +60,9 @@
                     {/if}
                 </div>
                 <div class="col-sm-auto">
-                    <label class="form-label small mb-1" for="adm_req_review_status">{$l10n->get('PLG_REQUIREMENTS_STATUS')}</label>
-                    <select name="status" id="adm_req_review_status" class="form-select">
-                        <option value="">{$l10n->get('SYS_ALL')}</option>
-                        {foreach $statusEntries as $s}
-                            <option value="{$s.value}" {if $s.selected}selected{/if}>{$s.name}</option>
-                        {/foreach}
-                    </select>
+                    <label class="form-label small mb-1" for="adm_req_review_member">{$l10n->get('SYS_MEMBER')}</label>
+                    <input type="search" name="member" id="adm_req_review_member" value="{$memberQuery}" class="form-control"
+                           placeholder="{$l10n->get('SYS_NAME')}">
                 </div>
                 <div class="col-auto">
                     <button type="submit" class="btn btn-secondary"><i class="bi bi-funnel"></i> {$l10n->get('SYS_FILTER')}</button>

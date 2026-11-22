@@ -13,6 +13,8 @@
     .adm-req-overview .adm-req-fill.miss { background: var(--bs-warning, #ffc107); }
     .adm-req-overview .adm-req-fill.over { background: var(--bs-danger, #dc3545); }
     .adm-req-overview .adm-req-fill.none { background: var(--bs-secondary, #adb5bd); }
+    .adm-req-overview .adm-req-fill-pending { position: absolute; top: 0; bottom: 0; opacity: .45;
+        background: repeating-linear-gradient(45deg, var(--bs-secondary, #6c757d) 0 4px, transparent 4px 8px); }
     .adm-req-overview .adm-req-val { font-size: .75rem; }
     .adm-req-overview .adm-req-val-in { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; line-height: 1; white-space: nowrap; color: #212529; text-shadow: 0 0 2px #fff, 0 0 3px #fff; }
     .adm-req-overview .adm-req-bar-link { display: block; text-decoration: none; color: inherit; }

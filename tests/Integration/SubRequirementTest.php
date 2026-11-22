@@ -8,6 +8,7 @@ use AdmidioPlugin\Requirements\Entity\RequirementType;
 use AdmidioPlugin\Requirements\Service\ActivityExportService;
 use AdmidioPlugin\Requirements\Service\ActivityService;
 use AdmidioPlugin\Requirements\Service\RequirementTypeService;
+use AdmidioPlugin\Requirements\Service\ReviewService;
 use AdmidioPlugin\Requirements\Tests\Support\RequirementsDatabaseTestCase;
 
 require_once dirname(__DIR__) . '/Support/RequirementsDatabaseTestCase.php';
@@ -44,14 +45,26 @@ final class SubRequirementTest extends RequirementsDatabaseTestCase
 
     private function credit(Activity $activity, RequirementType $type, float $claimed, ?float $accepted = null): void
     {
-        (new ActivityService($this->getDatabase()))->saveCredit(
+        $credit = (new ActivityService($this->getDatabase()))->saveCredit(
             new ActivityCredit($this->getDatabase()),
             $activity,
             $type,
             '2026-03-01',
-            $claimed,
-            $accepted
+            $claimed
         );
+        if ($accepted !== null) {
+            $this->setAccepted($credit, $accepted);
+        }
+    }
+
+    /**
+     * The current user reviews the requirement and its parts, every submitted credit of which waits
+     * for a decision.
+     */
+    private function reviewedByCurrentUser(RequirementType $parent): void
+    {
+        $this->enableReviews(array((int) $GLOBALS['gCurrentUser']->getValue('usr_id')));
+        (new RequirementTypeService($this->getDatabase()))->saveType($parent, array('rqt_review_mode' => ReviewService::MODE_APPROVAL_QUEUE));
     }
 
     public function testAPartTakesThePeriodOfItsParent(): void
@@ -150,10 +163,11 @@ final class SubRequirementTest extends RequirementsDatabaseTestCase
         )->fetchColumn();
 
         // A reviewer recognises only 6 hours of the parent, below the 8 claimed for the part.
+        $this->reviewedByCurrentUser($parent);
         $this->assertRefusedWith(
             'PLG_REQUIREMENTS_THEREOF_EXCEEDS',
-            fn() => (new ActivityService($this->getDatabase()))->acceptCredits(
-                array($parentCreditId => 6.0)
+            fn() => (new ReviewService($this->getDatabase()))->saveDecisions(
+                array($parentCreditId => array('accepted' => 6.0, 'status' => '', 'comment' => ''))
             ),
             array($part->getValue('rqt_name'), $parent->getValue('rqt_name'))
         );
@@ -336,7 +350,10 @@ final class SubRequirementTest extends RequirementsDatabaseTestCase
 
         // The reviewer (the current user) accepts less than the member's personal part: no refusal that
         // would name the member's requirement.
-        $this->assertSame(1, (new ActivityService($this->getDatabase()))->acceptCredits(array($parentCreditId => 6.0)));
+        $this->reviewedByCurrentUser($parent);
+        $this->assertCount(1, (new ReviewService($this->getDatabase()))->saveDecisions(
+            array($parentCreditId => array('accepted' => 6.0, 'status' => '', 'comment' => ''))
+        ));
     }
 
     /**

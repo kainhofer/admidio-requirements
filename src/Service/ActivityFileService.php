@@ -69,7 +69,7 @@ final class ActivityFileService
         if (!self::isEnabled()) {
             throw new Exception('PLG_REQUIREMENTS_FILES_DISABLED');
         }
-        if ((int) $activity->getValue('rqa_id') === 0 || !$activity->isEditable()) {
+        if ((int) $activity->getValue('rqa_id') === 0 || !$activity->mayAddFiles()) {
             throw new Exception('SYS_NO_RIGHTS');
         }
 

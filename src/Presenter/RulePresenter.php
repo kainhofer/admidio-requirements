@@ -8,6 +8,7 @@ use AdmidioPlugin\Requirements\Entity\RequirementRoleRule;
 use AdmidioPlugin\Requirements\Entity\RequirementType;
 use AdmidioPlugin\Requirements\Service\FulfilmentService;
 use AdmidioPlugin\Requirements\Service\RequirementTypeService;
+use AdmidioPlugin\Requirements\Service\ReviewService;
 
 /**
  * The requirements page: the organization's requirements and the member's own, on one page.
@@ -327,6 +328,28 @@ class RulePresenter extends RequirementsPresenter
         $form->addCheckbox('rqt_active', $gL10n->get('PLG_REQUIREMENTS_ACTIVE'),
             $type->isNewRecord() ? true : (bool) $type->getValue('rqt_active'),
             array('helpTextId' => 'PLG_REQUIREMENTS_REQUIREMENT_ACTIVE_HELP'));
+
+        // How the credits are reviewed - only where reviews exist at all. A part is reviewed the way
+        // its parent is; the template says so instead of offering a choice that would not apply.
+        $showReview = ReviewService::isEnabled();
+        if ($showReview) {
+            $modes = array();
+            foreach (ReviewService::MODES as $mode) {
+                $modes[$mode] = $gL10n->get('PLG_REQUIREMENTS_REVIEW_MODE_' . strtoupper($mode));
+            }
+            $form->addSelectBox('rqt_review_mode', $gL10n->get('PLG_REQUIREMENTS_REVIEW_MODE'), $modes, array(
+                'defaultValue' => (string) $type->getValue('rqt_review_mode') ?: ReviewService::MODE_NONE,
+                'showContextDependentFirstEntry' => false,
+                'helpTextId' => 'PLG_REQUIREMENTS_REVIEW_MODE_HELP'
+            ));
+            $form->addInput('rqt_review_due_days', $gL10n->get('PLG_REQUIREMENTS_REVIEW_DUE_DAYS'),
+                (string) (int) $type->getValue('rqt_review_due_days'),
+                array('type' => 'number', 'minNumber' => 0, 'maxNumber' => 3650, 'step' => 1,
+                    'helpTextId' => 'PLG_REQUIREMENTS_REVIEW_DUE_DAYS_HELP'));
+        }
+        $this->assignSmartyVariable('showReviewMode', $showReview);
+        $this->assignSmartyVariable('reviewModeOfParent', $showReview && (int) $type->getValue('rqt_parent_id') > 0);
+
         $form->addSubmitButton('adm_button_save', $gL10n->get('SYS_SAVE'), array('icon' => 'bi-check-lg'));
 
         $this->assignSmartyVariable('userCreatedName', $type->getNameOfCreatingUser());

@@ -6,6 +6,9 @@
     {if $p.percent is not null}
         <div class="adm-req-fill {if $p.status eq 'fulfilled'}ok{elseif $p.status eq 'overdue' or $p.status eq 'never-fulfilled'}over{elseif $p.status eq 'missing'}miss{else}none{/if}"
              style="width: {$p.percent}%;"></div>
+        {if isset($p.pendingPercent) and $p.pendingPercent gt 0}
+            <div class="adm-req-fill-pending" style="left: {$p.percent}%; width: {$p.pendingPercent}%;"></div>
+        {/if}
     {/if}
     <div class="adm-req-val adm-req-val-in">
         {if $name}{$name}: {/if}

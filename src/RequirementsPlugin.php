@@ -21,6 +21,14 @@ final class RequirementsPlugin
     public const SETTING_WIDGET_ACCESS = 'requirements_widget_enabled';
     public const SETTING_WIDGET_PREVIOUS_PERIODS = 'requirements_widget_previous_periods';
 
+    public const SETTING_REVIEW_ENABLED = 'requirements_review_enabled';
+    public const SETTING_REVIEW_ROLES = 'requirements_review_roles';
+    public const SETTING_REVIEW_USERS = 'requirements_review_users';
+    public const SETTING_REVIEW_REVIEWER_CHOICE = 'requirements_review_reviewer_choice';
+    public const SETTING_REVIEW_EDIT_DURING = 'requirements_review_edit_during';
+    public const SETTING_REVIEW_EDIT_AFTER = 'requirements_review_edit_after';
+    public const SETTING_REVIEW_NOTIFICATIONS = 'requirements_review_notifications';
+
     public const EDIT_POLICY_ALWAYS = 'always';
     public const EDIT_POLICY_UNTIL_SUBMITTED = 'until_submitted';
 

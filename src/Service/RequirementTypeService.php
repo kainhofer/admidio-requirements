@@ -185,6 +185,26 @@ final class RequirementTypeService
         );
         $type->setValue('rqt_sequence', max(0, (int)($values['rqt_sequence'] ?? $type->getValue('rqt_sequence'))));
 
+        // How the credits of the requirement are reviewed. A part follows its parent, and a member's
+        // own requirement is never reviewed, so both keep `none` stored. A period of its own - and a
+        // request for one - needs calendar periods.
+        $reviewMode = (string)($values['rqt_review_mode'] ?? ($type->getValue('rqt_review_mode') ?: ReviewService::MODE_NONE));
+        if (!in_array($reviewMode, ReviewService::MODES, true)) {
+            throw new Exception('SYS_INVALID_PAGE_VIEW');
+        }
+        if ($parentId !== null || self::ownerOf($type) !== null) {
+            $reviewMode = ReviewService::MODE_NONE;
+        } elseif ($anchor !== 'calendar' && in_array($reviewMode, array(ReviewService::MODE_PERIOD, ReviewService::MODE_AUDIT), true)) {
+            throw new Exception('PLG_REQUIREMENTS_REVIEW_MODE_NEEDS_CALENDAR');
+        }
+        $dueDays = (int)($values['rqt_review_due_days'] ?? $type->getValue('rqt_review_due_days'));
+        if ($dueDays < 0 || $dueDays > 3650) {
+            throw new Exception('SYS_INVALID_PAGE_VIEW');
+        }
+        $type->setValue('rqt_review_mode', $reviewMode);
+        $type->setValue('rqt_review_due_days', $dueDays);
+        ReviewService::resetCaches();
+
         if (trim((string)$type->getValue('rqt_name', 'database')) === '') {
             throw new Exception('SYS_FIELD_EMPTY', array('SYS_NAME'));
         }
@@ -318,7 +338,7 @@ final class RequirementTypeService
 
         $sql = 'SELECT rqt_id, rqt_uuid, rqt_usr_id, rqt_parent_id, rqt_name, rqt_short_name, rqt_description,
                        rqt_period_unit, rqt_period_count, rqt_period_anchor,
-                       rqt_multiple_roles_mode, rqt_active, rqt_sequence
+                       rqt_multiple_roles_mode, rqt_active, rqt_sequence, rqt_review_mode, rqt_review_due_days
                   FROM ' . RequirementsTables::requirementTypes() . '
                  WHERE rqt_org_id = ?
                    AND (rqt_usr_id IS NULL OR rqt_usr_id = ?)';

@@ -12,6 +12,7 @@ use AdmidioPlugin\Requirements\Entity\Provider;
 use AdmidioPlugin\Requirements\Entity\RequirementRoleRule;
 use AdmidioPlugin\Requirements\Entity\RequirementType;
 use AdmidioPlugin\Requirements\Service\ActivityService;
+use AdmidioPlugin\Requirements\Service\ReviewService;
 use AdmidioPlugin\Requirements\Service\ActivityFileService;
 use AdmidioPlugin\Requirements\Service\FulfilmentService;
 use AdmidioPlugin\Requirements\Service\ImportService;
@@ -373,13 +374,13 @@ final class RequirementsCli
                 'begin_date' => $activity['rqa_begin_date'],
                 'end_date' => $activity['rqa_end_date'],
                 'provider' => $activity['rqa_provider_short_name'] ?: $activity['rqa_provider_name'],
-                'status' => $activity['rqa_status'],
-                'review_status' => $activity['rqa_review_status']
+                'status' => $activity['rqa_status']
             );
             if ($type !== null) {
                 $row['credited_period'] = $activity['rac_period_reference'];
                 $row['claimed'] = $activity['rac_credits_claimed'];
                 $row['accepted'] = $activity['rac_credits_accepted'];
+                $row['review_status'] = $activity['rac_review_status'];
             }
             $rows[] = $row;
         }
@@ -449,6 +450,9 @@ final class RequirementsCli
         $claimed = (float)CliApplication::requireArgument($arguments, 3, 'claimed');
         $accepted = array_key_exists('accepted', $options)
             ? CliApplication::optionFloat($options, 'accepted') : null;
+        $reviewStatus = CliApplication::optionString($options, 'review-status', '');
+        $reviewComment = array_key_exists('review-comment', $options)
+            ? CliApplication::optionString($options, 'review-comment', '') : null;
 
         $existingId = self::findCreditId(
             (int)$activity->getValue('rqa_id'),
@@ -458,16 +462,28 @@ final class RequirementsCli
         $credit = new ActivityCredit($gDb, $existingId);
 
         return self::mutate($options, function () use (
-            $gDb, $credit, $activity, $type, $period, $claimed, $accepted
+            $gDb, $credit, $activity, $type, $period, $claimed, $accepted, $reviewStatus, $reviewComment
         ): array {
-            (new ActivityService($gDb))->saveCredit($credit, $activity, $type, $period, $claimed, $accepted);
+            (new ActivityService($gDb))->saveCredit($credit, $activity, $type, $period, $claimed);
+            // A decision is the reviewer's, so it goes through the review, with its permission check.
+            if ($accepted !== null || $reviewStatus !== '' || $reviewComment !== null) {
+                $creditId = (int) $credit->getValue('rac_id');
+                $stored = $credit->getValue('rac_credits_accepted', 'database');
+                (new ReviewService($gDb))->saveDecisions(array($creditId => array(
+                    'accepted' => $accepted ?? (($stored === null || $stored === '') ? null : (float) $stored),
+                    'status' => $reviewStatus,
+                    'comment' => $reviewComment ?? (string) $credit->getValue('rac_review_comment', 'database')
+                )));
+                $credit->readDataById($creditId);
+            }
             return array(
                 'uuid' => $credit->getValue('rac_uuid'),
                 'activity' => $activity->getValue('rqa_uuid'),
                 'requirement' => $type->getValue('rqt_name'),
                 'period_reference' => $credit->getValue('rac_period_reference', 'database'),
                 'claimed' => $credit->getValue('rac_credits_claimed'),
-                'accepted' => $credit->getValue('rac_credits_accepted')
+                'accepted' => $credit->getValue('rac_credits_accepted'),
+                'review_status' => $credit->getValue('rac_review_status')
             );
         });
     }
@@ -1128,9 +1144,7 @@ final class RequirementsCli
             'end-time' => 'rqa_end_time',
             'certificate' => 'rqa_certificate_date',
             'comments' => 'rqa_comments',
-            'status' => 'rqa_status',
-            'review-status' => 'rqa_review_status',
-            'review-comments' => 'rqa_review_comments'
+            'status' => 'rqa_status'
         );
         $values = array();
         foreach ($map as $option => $field) {

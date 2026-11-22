@@ -139,4 +139,40 @@ final class ReviewVocabularyTest extends RequirementsUnitTestCase
 
         return $cache[$language] = $keys;
     }
+
+    /**
+     * The review process names its modes, the states of a review, the filters of the review page and
+     * the decisions on a credit by building the key from the value, so a value without its label
+     * would reach the page as a raw key.
+     */
+    public function testEveryReviewValueHasItsLabelInBothLanguages(): void
+    {
+        $keys = array();
+        foreach (\AdmidioPlugin\Requirements\Service\ReviewService::MODES as $mode) {
+            $keys[] = 'PLG_REQUIREMENTS_REVIEW_MODE_' . strtoupper($mode);
+        }
+        foreach (\AdmidioPlugin\Requirements\Entity\Review::STATUSES as $status) {
+            $keys[] = 'PLG_REQUIREMENTS_REVIEW_STATE_' . strtoupper($status);
+        }
+        foreach (\AdmidioPlugin\Requirements\Service\ReviewListService::REVIEW_FILTERS as $filter) {
+            $keys[] = 'PLG_REQUIREMENTS_REVIEW_FILTER_' . strtoupper($filter);
+        }
+        foreach (\AdmidioPlugin\Requirements\Service\ReviewService::CREDIT_STATUSES as $status) {
+            $keys[] = \AdmidioPlugin\Requirements\Service\ReviewNotifier::creditStatusLabelKey($status);
+        }
+        // The reminders are put together from a greeting, the reminder of their kind and a thank-you.
+        foreach (array('GREETING', 'THANKS', 'OPEN_LIST', 'REMINDER_DUE', 'REMINDER_REQUESTED', 'REMINDER_CLARIFICATION',
+            'SUBMISSION_REMINDER', 'REQUESTED', 'CANCELLED') as $mail) {
+            $keys[] = 'PLG_REQUIREMENTS_REVIEW_MAIL_' . $mail;
+        }
+        foreach (array('SUBMIT_ACTIVITY', 'SUBMIT_PERIOD', 'SHARE', 'REREVIEW', 'RESUBMIT') as $action) {
+            $keys[] = 'PLG_REQUIREMENTS_REVIEW_' . $action;
+            $keys[] = 'PLG_REQUIREMENTS_REVIEW_' . $action . '_HELP';
+        }
+
+        foreach (array('en', 'de') as $language) {
+            $missing = array_diff($keys, array_keys(self::languageKeys($language)));
+            $this->assertSame(array(), array_values($missing), 'missing in ' . $language);
+        }
+    }
 }

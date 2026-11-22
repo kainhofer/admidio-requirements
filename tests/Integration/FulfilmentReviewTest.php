@@ -6,6 +6,7 @@ use AdmidioPlugin\Requirements\Entity\ActivityCredit;
 use AdmidioPlugin\Requirements\Entity\RequirementType;
 use AdmidioPlugin\Requirements\Service\ActivityService;
 use AdmidioPlugin\Requirements\Service\FulfilmentService;
+use AdmidioPlugin\Requirements\Service\ReviewService;
 use AdmidioPlugin\Requirements\Tests\Support\RequirementsDatabaseTestCase;
 
 require_once dirname(__DIR__) . '/Support/RequirementsDatabaseTestCase.php';
@@ -243,94 +244,120 @@ final class FulfilmentReviewTest extends RequirementsDatabaseTestCase
         $this->assertSame('overdue', $row['status']);
     }
 
-    // ---------------------------------------------------------------- accepting credits
+    // ---------------------------------------------------------------- decisions on credits
 
-    public function testAcceptingCreditsWritesTheReviewersNumber(): void
+    /**
+     * A requirement whose every submitted credit waits for a reviewer, with the current user as its
+     * reviewer: the simplest setting in which a credit is decided on.
+     *
+     * @return array{0:array{usr_id:int,rol_id:int},1:RequirementType,2:int} member, requirement, credit id
+     */
+    private function queuedCredit(string $login, float $claimed = 8.0): array
     {
-        $member = $this->createMember('req_rev_accept');
-        $type = $this->createRequirement('CPD', $member['rol_id'], 10.0);
-        $this->createCreditedActivity($member['usr_id'], $type, '2026-03-01', 8.0);
+        $this->enableReviews(array((int) $GLOBALS['gCurrentUser']->getValue('usr_id')));
+        $member = $this->createMember($login);
+        $type = $this->createRequirement('CPD', $member['rol_id'], 10.0, array(),
+            array('rqt_review_mode' => ReviewService::MODE_APPROVAL_QUEUE));
+        $this->createCreditedActivity($member['usr_id'], $type, '2026-03-01', $claimed);
 
-        $creditId = $this->memberRow($this->roster($type), $member['usr_id'])['contributions'][0]['creditId'];
+        return array($member, $type, $this->memberRow($this->roster($type), $member['usr_id'])['contributions'][0]['creditId']);
+    }
 
-        $this->assertSame(1, (new ActivityService($this->getDatabase()))->acceptCredits(array($creditId => 3.0)));
+    public function testDecidingOnACreditWritesTheReviewersNumber(): void
+    {
+        [$member, $type, $creditId] = $this->queuedCredit('req_rev_accept');
+
+        $before = $this->memberRow($this->roster($type), $member['usr_id']);
+        $this->assertSame(0.0, $before['attained'], 'In the queue mode a credit counts once accepted.');
+        $this->assertSame(8.0, $before['pending']);
+
+        $changed = (new ReviewService($this->getDatabase()))->saveDecisions(array(
+            $creditId => array('accepted' => 3.0, 'status' => '', 'comment' => '')
+        ));
+
+        $this->assertSame(ReviewService::CREDIT_PARTIALLY_ACCEPTED, $changed[$creditId]['status'], 'The status follows the amount.');
         $this->assertSame(3.0, $this->memberRow($this->roster($type), $member['usr_id'])['attained']);
     }
 
     /**
-     * §6.6: an accepted zero is an explicit rejection, an empty field is "no answer yet". They are
-     * different writes and the review form has to be able to produce both.
+     * §6.6: an accepted zero is an explicit rejection; taking a decision back leaves the credit open,
+     * because a credit under review stays under review.
      */
-    public function testAnAcceptedZeroRejectsAndClearingRestoresTheClaim(): void
+    public function testAnAcceptedZeroRejectsAndTakingTheDecisionBackLeavesItOpen(): void
     {
-        $member = $this->createMember('req_rev_accept_zero');
-        $type = $this->createRequirement('CPD', $member['rol_id'], 10.0);
-        $this->createCreditedActivity($member['usr_id'], $type, '2026-03-01', 8.0);
+        [$member, $type, $creditId] = $this->queuedCredit('req_rev_accept_zero');
+        $service = new ReviewService($this->getDatabase());
 
-        $service = new ActivityService($this->getDatabase());
-        $creditId = $this->memberRow($this->roster($type), $member['usr_id'])['contributions'][0]['creditId'];
-
-        $service->acceptCredits(array($creditId => 0.0));
+        $service->saveDecisions(array($creditId => array('accepted' => 0.0, 'status' => '', 'comment' => '')));
+        $credit = new ActivityCredit($this->getDatabase(), $creditId);
+        $this->assertSame(ReviewService::CREDIT_NOT_ACCEPTED, $credit->getValue('rac_review_status'));
         $this->assertSame(0.0, $this->memberRow($this->roster($type), $member['usr_id'])['attained']);
 
-        $service->acceptCredits(array($creditId => null));
-        $this->assertSame(8.0, $this->memberRow($this->roster($type), $member['usr_id'])['attained']);
+        $service->saveDecisions(array($creditId => array('accepted' => null, 'status' => '', 'comment' => '')));
+        $credit = new ActivityCredit($this->getDatabase(), $creditId);
+        $this->assertSame(ReviewService::CREDIT_OPEN, $credit->getValue('rac_review_status'));
+        $this->assertSame(8.0, $this->memberRow($this->roster($type), $member['usr_id'])['pending']);
     }
 
-    public function testAnUnchangedValueIsNotWrittenAgain(): void
+    public function testAnUnchangedDecisionIsNotWrittenAgain(): void
     {
-        $member = $this->createMember('req_rev_accept_same');
-        $type = $this->createRequirement('CPD', $member['rol_id'], 10.0);
-        $this->createCreditedActivity($member['usr_id'], $type, '2026-03-01', 8.0, 5.0);
+        [, , $creditId] = $this->queuedCredit('req_rev_accept_same');
+        $service = new ReviewService($this->getDatabase());
+        $decision = array($creditId => array('accepted' => 5.0, 'status' => '', 'comment' => 'Half a day only'));
 
-        $creditId = $this->memberRow($this->roster($type), $member['usr_id'])['contributions'][0]['creditId'];
-
-        $this->assertSame(0, (new ActivityService($this->getDatabase()))->acceptCredits(array($creditId => 5.0)));
+        $this->assertCount(1, $service->saveDecisions($decision));
+        $this->assertSame(array(), $service->saveDecisions($decision));
     }
 
     /**
-     * §14: the accepted credits of a review pass are one decision, so a rejected row must not leave
-     * the rows before it committed.
+     * §14: the decisions of a row are one save, so a refused credit must not leave the credits
+     * before it committed.
      *
      * Outside the per-test transaction, because the rollback under test unwinds every open one and
      * would otherwise take the fixtures with it rather than only the write.
      */
-    public function testOneBadRowRollsTheWholePassBack(): void
+    public function testOneRefusedCreditRollsTheWholeRowBack(): void
     {
         $this->outsideTheTestTransaction(function (): void {
-            $member = $this->createMember('req_rev_accept_atomic');
-            $type = $this->createRequirement('CPD', $member['rol_id'], 10.0);
-            $this->createCreditedActivity($member['usr_id'], $type, '2026-03-01', 8.0);
-
-            $creditId = $this->memberRow($this->roster($type), $member['usr_id'])['contributions'][0]['creditId'];
+            [$member, $type, $creditId] = $this->queuedCredit('req_rev_accept_atomic');
 
             $this->assertRefusedWith('SYS_NO_RIGHTS', function () use ($creditId): void {
-                (new ActivityService($this->getDatabase()))->acceptCredits(array(
-                    $creditId => 4.0,
-                    $creditId + 100000 => 1.0
+                (new ReviewService($this->getDatabase()))->saveDecisions(array(
+                    $creditId => array('accepted' => 4.0, 'status' => '', 'comment' => ''),
+                    $creditId + 100000 => array('accepted' => 1.0, 'status' => '', 'comment' => '')
                 ));
             });
 
-            // The 4.0 of the first row must be gone with the pass, so the claim still stands.
-            $this->assertSame(
-                8.0,
-                (new ActivityCredit($this->getDatabase(), $creditId))->getEffectiveCredits()
-            );
-            $this->assertSame(8.0, $this->memberRow($this->roster($type), $member['usr_id'])['attained']);
+            $this->assertNull((new ActivityCredit($this->getDatabase(), $creditId))->getValue('rac_credits_accepted', 'database'));
+            $this->assertSame(0.0, $this->memberRow($this->roster($type), $member['usr_id'])['attained']);
         });
     }
 
-    public function testANormalMemberCannotAcceptCredits(): void
+    /**
+     * Administrators of the plugin administer the organization's requirements; deciding on the
+     * members' credits is the reviewers'.
+     */
+    public function testAnAdministratorWhoIsNoReviewerCannotDecide(): void
     {
-        $member = $this->createMember('req_rev_accept_rights');
-        $type = $this->createRequirement('CPD', $member['rol_id'], 10.0);
-        $this->createCreditedActivity($member['usr_id'], $type, '2026-03-01', 8.0);
+        [, , $creditId] = $this->queuedCredit('req_rev_accept_admin');
+        $this->enableReviews(array());
 
-        $creditId = $this->memberRow($this->roster($type), $member['usr_id'])['contributions'][0]['creditId'];
+        $this->assertRefusedWith('SYS_NO_RIGHTS', function () use ($creditId): void {
+            (new ReviewService($this->getDatabase()))->saveDecisions(array(
+                $creditId => array('accepted' => 1.0, 'status' => '', 'comment' => '')
+            ));
+        });
+    }
+
+    public function testANormalMemberCannotDecide(): void
+    {
+        [$member, , $creditId] = $this->queuedCredit('req_rev_accept_rights');
 
         $this->assertRefusedWith('SYS_NO_RIGHTS', function () use ($member, $creditId): void {
             $this->asMember($member['usr_id'], function () use ($creditId): void {
-                (new ActivityService($this->getDatabase()))->acceptCredits(array($creditId => 1.0));
+                (new ReviewService($this->getDatabase()))->saveDecisions(array(
+                    $creditId => array('accepted' => 1.0, 'status' => '', 'comment' => '')
+                ));
             });
         });
     }
