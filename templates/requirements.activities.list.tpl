@@ -96,7 +96,7 @@
                 <select id="adm_req_requirement" class="form-select">
                     <option value="">{$l10n->get('PLG_REQUIREMENTS_ALL_REQUIREMENTS')}</option>
                     {foreach $typeOptions as $t}
-                        <option value="{$t.uuid}" {if $t.selected}selected{/if}>{$t.name nofilter}</option>
+                        <option value="{$t.uuid}" {if $t.selected}selected{/if}>{if $t.isPart}&nbsp;&nbsp;&nbsp;&nbsp;&#8627;&nbsp;{/if}{$t.name nofilter}</option>
                     {/foreach}
                 </select>
             </div>

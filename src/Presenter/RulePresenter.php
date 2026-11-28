@@ -615,11 +615,17 @@ class RulePresenter extends RequirementsPresenter
             $this
         );
         if ($rule->isNewRecord()) {
+            // Each part follows its parent, indented, as in the list of requirements.
+            $activeTypes = array_values(array_filter(
+                (new RequirementTypeService($gDb))->findTypes(),
+                static fn(array $type): bool => (bool) $type['rqt_active']
+            ));
+            $activeIds = array_map(static fn(array $type): int => (int) $type['rqt_id'], $activeTypes);
             $options = array();
-            foreach ((new RequirementTypeService($gDb))->findTypes() as $type) {
-                if ((bool) $type['rqt_active']) {
-                    $options[$type['rqt_uuid']] = (string) $type['rqt_name'];
-                }
+            foreach (RequirementTypeService::inHierarchyOrder($activeTypes) as $type) {
+                $isPart = in_array((int) $type['rqt_parent_id'], $activeIds, true);
+                $options[$type['rqt_uuid']] = ($isPart ? "\u{00A0}\u{00A0}\u{00A0}\u{00A0}\u{21B3}\u{00A0}" : '')
+                    . (string) $type['rqt_name'];
             }
             $form->addSelectBox('rqt_uuid', $gL10n->get('PLG_REQUIREMENTS_REQUIREMENT_TYPE'), $options, array(
                 'property' => FormPresenter::FIELD_REQUIRED,

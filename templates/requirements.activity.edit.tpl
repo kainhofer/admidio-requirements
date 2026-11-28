@@ -116,8 +116,8 @@
                             <label for="adm_req_add_credit" class="form-label small mb-1">{$l10n->get('PLG_REQUIREMENTS_ADD_CREDIT_TYPE')}</label>
                             <select id="adm_req_add_credit" class="form-select form-select-sm">
                                 <option value="">&ndash;</option>
-                                {foreach $optionalCreditTypes as $optId => $optName}
-                                    <option value="{$optId}">{$optName nofilter}</option>
+                                {foreach $optionalCreditTypes as $opt}
+                                    <option value="{$opt.typeId}">{if $opt.isPart}&nbsp;&nbsp;&nbsp;&nbsp;&#8627;&nbsp;{/if}{$opt.name nofilter}</option>
                                 {/foreach}
                             </select>
                         </div>

@@ -356,6 +356,38 @@ final class RequirementTypeService
     }
 
     /**
+     * The types in the order of their hierarchy: every part directly after its parent, in the order
+     * the parts had among themselves. A part whose parent is not among the types keeps its place.
+     *
+     * @param array<int,array<string,mixed>> $types as findTypes() returns them
+     * @return array<int,array<string,mixed>>
+     */
+    public static function inHierarchyOrder(array $types): array
+    {
+        $ids = array_map(static fn(array $t): int => (int) $t['rqt_id'], $types);
+        $parts = array();
+        foreach ($types as $type) {
+            $parentId = (int) $type['rqt_parent_id'];
+            if ($parentId > 0 && in_array($parentId, $ids, true)) {
+                $parts[$parentId][] = $type;
+            }
+        }
+
+        $ordered = array();
+        foreach ($types as $type) {
+            $parentId = (int) $type['rqt_parent_id'];
+            if ($parentId > 0 && in_array($parentId, $ids, true)) {
+                continue;
+            }
+            $ordered[] = $type;
+            foreach ($parts[(int) $type['rqt_id']] ?? array() as $part) {
+                $ordered[] = $part;
+            }
+        }
+        return $ordered;
+    }
+
+    /**
      * Role rules, optionally restricted to one requirement type, with the role name joined.
      *
      * @return array<int,array<string,mixed>>

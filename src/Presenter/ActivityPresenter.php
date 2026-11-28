@@ -284,11 +284,14 @@ class ActivityPresenter extends RequirementsPresenter
         $allTypes = (new RequirementTypeService($gDb))->findTypes('', $userId);
         $filter = $this->resolveListFilter($requirementUuid, $period, $userUuid, $periodTo);
 
+        // Each part follows its parent, indented, as in the list of requirements.
         $typeOptions = array();
-        foreach ($allTypes as $t) {
+        $typeIds = array_map(static fn(array $t): int => (int) $t['rqt_id'], $allTypes);
+        foreach (RequirementTypeService::inHierarchyOrder($allTypes) as $t) {
             $typeOptions[] = array(
                 'uuid' => $t['rqt_uuid'],
                 'name' => SecurityUtils::encodeHTML((string) $t['rqt_name']),
+                'isPart' => in_array((int) $t['rqt_parent_id'], $typeIds, true),
                 'selected' => $filter['type'] !== null && $t['rqt_uuid'] === $filter['type']['rqt_uuid']
             );
         }
@@ -1311,7 +1314,6 @@ class ActivityPresenter extends RequirementsPresenter
         $maxYear = (string) ((int) date('Y') + 1);
 
         $creditFields = array();
-        $optionalCreditTypes = array();
         foreach ($this->creditableTypes($existingCredits, $targetUserId) as $type) {
             $typeId = (int) $type['rqt_id'];
             $current = $existingCredits[$typeId] ?? null;
@@ -1365,9 +1367,6 @@ class ActivityPresenter extends RequirementsPresenter
                 'reviewChanged' => (string) ($current['rac_review_changed'] ?? '') === '' ? ''
                     : $gL10n->get('PLG_REQUIREMENTS_REVIEW_CHANGED_SINCE', array(substr((string) $current['rac_review_changed'], 0, 10)))
             );
-            if (!$shown) {
-                $optionalCreditTypes[$typeId] = SecurityUtils::encodeHTML((string) $type['rqt_name']);
-            }
         }
         // A sub-requirement is entered as "thereof" under its parent: the rows follow their parent,
         // and a parent whose part is on show is on show as well, so that the part has something to be a part of.
@@ -1384,7 +1383,6 @@ class ActivityPresenter extends RequirementsPresenter
             }
             if (isset($shownParts[$field['typeId']]) && !$field['shown']) {
                 $field['shown'] = true;
-                unset($optionalCreditTypes[$field['typeId']]);
             }
             $ordered[] = $field;
             foreach ($creditFields as $part) {
@@ -1395,6 +1393,17 @@ class ActivityPresenter extends RequirementsPresenter
         }
         // A part whose parent is not creditable here (inactive, or foreign) is left out of the form.
         $creditFields = $ordered;
+        // The selector offers the hidden rows in the same order, a part indented under its parent.
+        $optionalCreditTypes = array();
+        foreach ($creditFields as $field) {
+            if (!$field['shown']) {
+                $optionalCreditTypes[] = array(
+                    'typeId' => $field['typeId'],
+                    'name' => $field['name'],
+                    'isPart' => $field['parentId'] > 0
+                );
+            }
+        }
         $this->assignSmartyVariable('optionalCreditTypes', $optionalCreditTypes);
 
         // The credited period follows the dates of the activity until the member sets it: a period
